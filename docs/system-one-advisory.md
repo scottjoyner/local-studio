@@ -228,7 +228,7 @@ A valid receipt must carry:
     "consumer": "local-studio",
     "work_id": "work-...",
     "consumer_session_id": "<exact active Pi session id>",
-    "project_fingerprint": "<sha256(normalized absolute cwd)>",
+    "project_fingerprint": "<sha256(canonical realpath workspace)>",
     "snapshot_sha256": "<exact source heartbeat snapshot sha256>"
   }
 }
