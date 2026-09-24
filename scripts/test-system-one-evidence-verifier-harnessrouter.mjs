@@ -286,6 +286,17 @@ try {
       package_manifest_sha256: SYSTEMONE_PACKAGE_MANIFEST_SHA256,
       package_python_file_count: 20,
     },
+    harnessrouter_python: {
+      executable: "/synthetic/python",
+      executable_sha256: "9".repeat(64),
+      version: "3.12.0",
+      isolated: true,
+      ignore_environment: true,
+      no_site: true,
+      search_paths: ["/synthetic/site-packages"],
+      startup_mode: "python -I -S with explicit site-packages sys.path",
+    },
+    sanitized_environment_removed_keys: ["PYTHONPATH", "TYPESAFE_API_KEY"],
     my_jev_head: myJevHead,
     source_checkouts_clean: true,
     source_heads_stable: true,
@@ -472,6 +483,35 @@ try {
   if (verified.verdict !== "pass") {
     throw new Error("HarnessRouter-mode verifier returned non-pass");
   }
+
+  producerReport.harnessrouter_python.isolated = false;
+  writeFileSync(
+    producerReportPath,
+    JSON.stringify(producerReport, null, 2) + "\n",
+    "utf8",
+  );
+  const isolationTamper = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+  );
+  if (isolationTamper.status === 0) {
+    throw new Error("Expected producer Python isolation tampering to fail");
+  }
+  const isolationRejected = JSON.parse(isolationTamper.stdout);
+  if (
+    isolationRejected.verdict !== "fail" ||
+    isolationRejected.assertions.producer_harnessrouter_python_isolated !== false
+  ) {
+    throw new Error("Verifier did not identify producer Python isolation drift");
+  }
+  producerReport.harnessrouter_python.isolated = true;
+  writeFileSync(
+    producerReportPath,
+    JSON.stringify(producerReport, null, 2) + "\n",
+    "utf8",
+  );
 
   sourceSnapshot.work.goal = "tampered after capture";
   writeFileSync(
