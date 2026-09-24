@@ -111,6 +111,8 @@ if [[ -n "${OPENCODE_SESSION_ID:-}" ]]; then
   node "$REPO_ROOT/scripts/export-opencode-session-evidence.mjs" "${OPENCODE_EXPORT_ARGS[@]}"
   EVIDENCE_ARGS+=(
     --opencode-session "$OPENCODE_SESSION_ID"
+    --opencode-receipt "$OPENCODE_SESSION_RECEIPT"
+    --opencode-export "$OPENCODE_SESSION_EXPORT"
     --session "opencode=$OPENCODE_SESSION_RECEIPT"
     --artifact "$OPENCODE_SESSION_EXPORT"
   )
