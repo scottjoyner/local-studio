@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -42,6 +42,8 @@ if (has("--help")) {
       "  --opencode-session <session-id>        repeatable",
       "  --opencode-root <path>",
       "  --opencode-config <path>",
+      "  --opencode-receipt <receipt.json>",
+      "  --opencode-export <sanitized-export.json>",
       "  --hermes",
       "  --hermes-home <path>",
       "  --benchmark <path>                  repeatable",
@@ -104,6 +106,155 @@ const fileMetadataEvidence = (kind, reference) => {
   };
 };
 
+const verifyOpenCodeSessionEvidence = async ({
+  receiptReference,
+  exportReference,
+  expectedModel,
+  requestedSessionIds,
+}) => {
+  if (!receiptReference && !exportReference) return null;
+
+  const receiptFile = receiptReference
+    ? await pathEvidence("opencode-receipt", receiptReference, "opencode")
+    : null;
+  const exportFile = exportReference
+    ? await pathEvidence("opencode-sanitized-export", exportReference, "opencode")
+    : null;
+  const failures = [];
+
+  if (!receiptReference) failures.push("missing-receipt");
+  if (!exportReference) failures.push("missing-sanitized-export");
+  if (receiptFile?.type !== "file") failures.push("receipt-not-file-backed");
+  if (exportFile?.type !== "file") failures.push("export-not-file-backed");
+
+  let receipt = null;
+  let exported = null;
+  if (receiptFile?.type === "file") {
+    try {
+      receipt = JSON.parse(readFileSync(receiptFile.reference, "utf8"));
+    } catch {
+      failures.push("receipt-invalid-json");
+    }
+  }
+  if (exportFile?.type === "file") {
+    try {
+      exported = JSON.parse(readFileSync(exportFile.reference, "utf8"));
+    } catch {
+      failures.push("export-invalid-json");
+    }
+  }
+
+  if (receipt) {
+    if (receipt.schemaVersion !== "local-studio/opencode-session-evidence/v1") {
+      failures.push("receipt-schema-mismatch");
+    }
+    if (receipt.accepted !== true) failures.push("receipt-not-accepted");
+    if (receipt.expected?.modelID !== expectedModel) failures.push("receipt-model-mismatch");
+    if (
+      typeof receipt.expected?.providerID !== "string" ||
+      receipt.expected.providerID.length === 0
+    ) {
+      failures.push("receipt-provider-unpinned");
+    }
+    if (receipt.acceptanceTurn?.modelAccepted !== true) failures.push("receipt-model-not-accepted");
+    if (receipt.acceptanceTurn?.providerAccepted !== true) failures.push("receipt-provider-not-accepted");
+    if (receipt.acceptanceTurn?.toolRoundTripAccepted !== true) failures.push("receipt-tool-not-accepted");
+    if (receipt.acceptanceTurn?.fallbackDetected !== false) failures.push("receipt-fallback-detected");
+    if (
+      !Array.isArray(receipt.acceptanceTurn?.assistantErrors) ||
+      receipt.acceptanceTurn.assistantErrors.length !== 0
+    ) {
+      failures.push("receipt-assistant-errors");
+    }
+    if (
+      requestedSessionIds.length > 0 &&
+      !requestedSessionIds.includes(receipt.sessionId)
+    ) {
+      failures.push("receipt-session-id-mismatch");
+    }
+  }
+
+  if (receipt && exportFile?.type === "file") {
+    if (receipt.sanitizedExport?.sha256 !== exportFile.sha256) {
+      failures.push("export-sha256-mismatch");
+    }
+    if (Number(receipt.sanitizedExport?.sizeBytes) !== Number(exportFile.sizeBytes)) {
+      failures.push("export-size-mismatch");
+    }
+  }
+
+  if (receipt && exported) {
+    if (exported?.info?.id !== receipt.sessionId) failures.push("export-session-id-mismatch");
+    if (!Array.isArray(exported?.messages)) {
+      failures.push("export-messages-missing");
+    } else {
+      let lastUserIndex = -1;
+      for (let index = 0; index < exported.messages.length; index += 1) {
+        if (exported.messages[index]?.info?.role === "user") lastUserIndex = index;
+      }
+      if (lastUserIndex < 0) {
+        failures.push("export-user-turn-missing");
+      } else {
+        const assistants = exported.messages
+          .slice(lastUserIndex + 1)
+          .filter((message) => message?.info?.role === "assistant");
+        if (assistants.length === 0) failures.push("export-assistant-turn-missing");
+
+        const providerID = receipt.expected?.providerID;
+        if (
+          assistants.some(
+            (message) =>
+              message?.info?.modelID !== expectedModel ||
+              message?.info?.providerID !== providerID,
+          )
+        ) {
+          failures.push("export-provider-model-fallback");
+        }
+        if (assistants.some((message) => message?.info?.error)) {
+          failures.push("export-assistant-error");
+        }
+
+        const completedTools = assistants.flatMap((message) =>
+          (Array.isArray(message.parts) ? message.parts : [])
+            .filter((part) => part?.type === "tool" && part?.state?.status === "completed")
+            .map((part) => part.tool)
+            .filter((tool) => typeof tool === "string"),
+        );
+        const minCompletedTools = Number(receipt.expected?.minCompletedTools ?? 1);
+        if (
+          !Number.isInteger(minCompletedTools) ||
+          minCompletedTools < 1 ||
+          completedTools.length < minCompletedTools
+        ) {
+          failures.push("export-tool-round-trip-missing");
+        }
+        const requiredTools = Array.isArray(receipt.expected?.requiredTools)
+          ? receipt.expected.requiredTools
+          : [];
+        if (requiredTools.some((tool) => !completedTools.includes(tool))) {
+          failures.push("export-required-tool-missing");
+        }
+      }
+    }
+  }
+
+  return {
+    accepted: failures.length === 0,
+    failures,
+    receiptFile,
+    exportFile,
+    receipt: receipt
+      ? {
+          schemaVersion: receipt.schemaVersion ?? null,
+          sessionId: receipt.sessionId ?? null,
+          expected: receipt.expected ?? null,
+          acceptanceTurn: receipt.acceptanceTurn ?? null,
+          accepted: receipt.accepted === true,
+        }
+      : null,
+  };
+};
+
 const sessionEvidence = await Promise.all(
   values("--session").map(async (entry) => {
     const separator = entry.indexOf("=");
@@ -122,7 +273,13 @@ const opencodeConfig = opencodeConfigOverride
       .map(expandPath)
       .find((candidate) => existsSync(candidate)) ?? null;
 const opencodeSessionIds = values("--opencode-session");
-const opencodeRequested = has("--opencode") || opencodeSessionIds.length > 0;
+const opencodeReceiptReference = value("--opencode-receipt");
+const opencodeExportReference = value("--opencode-export");
+const opencodeRequested =
+  has("--opencode") ||
+  opencodeSessionIds.length > 0 ||
+  Boolean(opencodeReceiptReference) ||
+  Boolean(opencodeExportReference);
 const opencodeSessionEvidence = await Promise.all(
   opencodeSessionIds.map(async (sessionId) => {
     const candidates = [
