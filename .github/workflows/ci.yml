@@ -47,7 +47,9 @@ jobs:
           node --check scripts/system-one-one-turn-acceptance.mjs
           node --check scripts/verify-system-one-evidence.mjs
           node --check scripts/test-system-one-evidence-verifier.mjs
+          node --check scripts/test-system-one-evidence-verifier-harnessrouter.mjs
           node scripts/test-system-one-evidence-verifier.mjs
+          node scripts/test-system-one-evidence-verifier-harnessrouter.mjs
 
   controller:
     if: github.event_name != 'schedule'
