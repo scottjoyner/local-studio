@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-08-18",
+  "updated": "2026-09-23",
   "tiers": [
     {
       "id": "nano",
@@ -168,6 +168,39 @@
           ],
           "intelligence_index": null,
           "agentic_index": null
+        },
+        {
+          "id": "ternary-bonsai-2-27b",
+          "name": "Ternary Bonsai 2 27B",
+          "role": null,
+          "description": "27B ternary Qwen3.8 derivative with 262K context, vision, reasoning, and tool calling",
+          "params": "27B dense, ternary PTQ",
+          "architecture": "Dense · Qwen3.8 hybrid attention · ternary",
+          "total_params_b": 27,
+          "active_params_b": null,
+          "context_tokens": 262144,
+          "license": "Apache-2.0",
+          "multimodal": true,
+          "notes": [
+            "Bonsai 2 currently requires PrismML's llama.cpp fork; stock llama.cpp is not compatible",
+            "PQ2_0 is the demo's preferred packing on ROCm-capable backends; PTQ1_0 is smaller but is not the default",
+            "Vision requires the mmproj GGUF alongside the model",
+            "Treat Radeon recipes as candidate evidence until an exact-card completion and agent-tool session are captured"
+          ],
+          "variants": [
+            {
+              "format": "ternary",
+              "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+              "official": true,
+              "source": "PrismML",
+              "allow_patterns": [
+                "*-PQ2_0.gguf",
+                "*mmproj-Q8_0.gguf"
+              ],
+              "size_gb": 7.8,
+              "caveat": "Requires PrismML llama.cpp fork; stock llama.cpp cannot run Bonsai 2"
+            }
+          ]
         }
       ]
     },
