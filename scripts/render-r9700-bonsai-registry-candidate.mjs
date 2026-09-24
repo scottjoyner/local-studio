@@ -65,6 +65,8 @@ const expected = {
   model: "Ternary-Bonsai-2-27B-PQ2_0",
   recipe: "bonsai2-r9700-prism-rocm",
   engineCommit: "9a9394a895b96003ca842a6041cb28ac49a108f7",
+  modelSha256: "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1",
+  projectorSha256: "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903",
 };
 
 const assertEqual = (actual, wanted, label) => {
@@ -182,6 +184,16 @@ for (const [label, entry] of [
     throw new Error(`${label} artifact is not a positive-size file with a SHA-256 receipt`);
   }
 }
+assertEqual(
+  String(evidence.target.modelFile.sha256).toLowerCase(),
+  expected.modelSha256,
+  "Bonsai 2 PQ2 artifact SHA-256",
+);
+assertEqual(
+  String(evidence.target.projectorFile.sha256).toLowerCase(),
+  expected.projectorSha256,
+  "Bonsai 2 projector SHA-256",
+);
 
 const capturedAt = evidence.capturedAt;
 if (typeof capturedAt !== "string" || !capturedAt) {
