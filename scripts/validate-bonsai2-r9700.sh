@@ -7,8 +7,7 @@ ROOT="${LOCAL_STUDIO_BONSAI_ROOT:-$HOME/.local/share/local-studio/experimental/b
 CONTROLLER="${LOCAL_STUDIO_URL:-http://127.0.0.1:8080}"
 OUTPUT="${LOCAL_STUDIO_BONSAI_EVIDENCE:-$ROOT/r9700-bonsai2-acceptance.evidence.json}"
 HERMES_SESSION_EXPORT="${HERMES_SESSION_EXPORT:-$ROOT/hermes-session.evidence.jsonl}"
-OPENCODE_SESSION_EXPORT="${OPENCODE_SESSION_EXPORT:-$ROOT/opencode-session.sanitized.json}"
-OPENCODE_SESSION_RECEIPT="${OPENCODE_SESSION_RECEIPT:-$ROOT/opencode-session.receipt.json}"
+REGISTRY_HANDOFF="${LOCAL_STUDIO_BONSAI_REGISTRY_HANDOFF:-$ROOT/registry-handoff}"
 RECIPE="$ROOT/bonsai2-r9700.recipe.json"
 MODEL="$ROOT/models/Ternary-Bonsai-2-27B-PQ2_0.gguf"
 PROJECTOR="$ROOT/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
@@ -93,27 +92,7 @@ if command -v opencode >/dev/null 2>&1 || [[ -n "${OPENCODE_SESSION_ID:-}" || -n
 fi
 
 if [[ -n "${OPENCODE_SESSION_ID:-}" ]]; then
-  if ! command -v opencode >/dev/null 2>&1; then
-    echo "error: OPENCODE_SESSION_ID was supplied but the opencode CLI is unavailable" >&2
-    exit 2
-  fi
-  mkdir -p "$(dirname "$OPENCODE_SESSION_EXPORT")" "$(dirname "$OPENCODE_SESSION_RECEIPT")"
-  OPENCODE_EXPORT_ARGS=(
-    --session "$OPENCODE_SESSION_ID"
-    --expected-model "$SERVED_MODEL"
-    --export-output "$OPENCODE_SESSION_EXPORT"
-    --receipt-output "$OPENCODE_SESSION_RECEIPT"
-    --min-completed-tools "${OPENCODE_MIN_COMPLETED_TOOLS:-1}"
-  )
-  if [[ -n "${OPENCODE_EXPECTED_PROVIDER:-}" ]]; then
-    OPENCODE_EXPORT_ARGS+=(--expected-provider "$OPENCODE_EXPECTED_PROVIDER")
-  fi
-  node "$REPO_ROOT/scripts/export-opencode-session-evidence.mjs" "${OPENCODE_EXPORT_ARGS[@]}"
-  EVIDENCE_ARGS+=(
-    --opencode-session "$OPENCODE_SESSION_ID"
-    --session "opencode=$OPENCODE_SESSION_RECEIPT"
-    --artifact "$OPENCODE_SESSION_EXPORT"
-  )
+  EVIDENCE_ARGS+=(--opencode-session "$OPENCODE_SESSION_ID")
 fi
 
 if [[ -n "${OPENCODE_SESSION_FILE:-}" ]]; then
@@ -169,3 +148,9 @@ OUTPUT="$OUTPUT" node --input-type=module -e '
   }, null, 2) + "\n");
   if (summary.candidatePromotable !== true) process.exitCode = 3;
 '
+
+node "$REPO_ROOT/scripts/render-r9700-bonsai-registry-candidate.mjs" \
+  --evidence "$OUTPUT" \
+  --output-dir "$REGISTRY_HANDOFF"
+
+echo "Registry handoff ready: $REGISTRY_HANDOFF"
