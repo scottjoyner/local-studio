@@ -267,6 +267,10 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       producer_systemone_config_pinned:
         producer.systemone_config_sha256 === SYSTEMONE_CONFIG_SHA256,
       producer_my_jev_head_matches: producer.my_jev_head === report.my_jev_head,
+      producer_source_checkouts_clean:
+        producer.source_checkouts_clean === true,
+      producer_source_heads_stable:
+        producer.source_heads_stable === true,
       producer_snapshot_matches:
         producer.snapshot_sha256 === report.snapshot_sha256 &&
         recommendation.snapshot_sha256 === report.snapshot_sha256,
@@ -421,6 +425,10 @@ const assertions = {
     report.schema === "local-studio-system-one-one-turn-acceptance-v2",
   report_heads_are_git_shas:
     isGitSha(report.local_studio_head) && isGitSha(report.my_jev_head),
+  capture_source_checkouts_clean:
+    report.source_checkouts_clean === true,
+  capture_source_heads_stable:
+    report.source_heads_stable === true,
   expected_local_head_matches:
     report.local_studio_head === expectedLocalHead,
   expected_my_jev_head_matches:
