@@ -1,6 +1,8 @@
 ARG ROCM_BASE_IMAGE=rocm/dev-ubuntu-24.04:7.2.1-complete@sha256:3db551c4e1229aac1857ac44fcb6141bb749f41348eb572452f11279153c13c3
 FROM ${ROCM_BASE_IMAGE}
 
+ARG ROCM_BASE_IMAGE
+ARG LOCAL_STUDIO_SOURCE_REVISION=unknown
 ARG PRISM_RELEASE=prism-b10709-9a9394a
 ARG PRISM_COMMIT=9a9394a895b96003ca842a6041cb28ac49a108f7
 ARG PRISM_ASSET=llama-prism-b10709-9a9394a-bin-ubuntu-rocm-7.2-x64.tar.gz
@@ -28,6 +30,8 @@ COPY packaging/r9700-bonsai2-rocm/entrypoint.sh /opt/local-ai/entrypoint
 RUN chmod 0755 /opt/local-ai/omp-acquire /opt/local-ai/entrypoint
 
 LABEL org.opencontainers.image.source="https://github.com/scottjoyner/local-studio"
+LABEL ai.localstudio.source_revision="${LOCAL_STUDIO_SOURCE_REVISION}"
+LABEL ai.localstudio.rocm_base="${ROCM_BASE_IMAGE}"
 LABEL ai.localstudio.hardware="radeon-ai-pro-r9700-32gb"
 LABEL ai.localstudio.engine.repo="PrismML-Eng/llama.cpp"
 LABEL ai.localstudio.engine.commit="9a9394a895b96003ca842a6041cb28ac49a108f7"
