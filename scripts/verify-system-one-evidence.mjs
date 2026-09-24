@@ -52,8 +52,38 @@ function sha256File(path) {
   return sha256(readFileSync(path));
 }
 
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalize(value[key])]),
+  );
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalSha256(value) {
+  return sha256(canonicalJson(value));
+}
+
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readJsonLines(path) {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function rowFingerprint(row) {
+  return canonicalSha256(row);
 }
 
 function isSha256(value) {
@@ -89,6 +119,28 @@ function requireFile(path, label) {
     throw new Error(label + " does not exist: " + path);
   }
   return path;
+}
+
+function consumeMarkerPath(systemOneDir, piSessionId, receiptId) {
+  const key = sha256(piSessionId + "\0" + receiptId);
+  return join(systemOneDir, "consumed", key + ".json");
+}
+
+function rowsAppearInOrder(ledgerRows, expectedRows) {
+  let cursor = 0;
+  for (const expected of expectedRows) {
+    const fingerprint = rowFingerprint(expected);
+    let found = false;
+    for (; cursor < ledgerRows.length; cursor += 1) {
+      if (rowFingerprint(ledgerRows[cursor]) === fingerprint) {
+        cursor += 1;
+        found = true;
+        break;
+      }
+    }
+    if (!found) return false;
+  }
+  return true;
 }
 
 function verifyProducer(report, systemOneDir, fixtureSha) {
@@ -216,6 +268,18 @@ const fixturePath = requireFile(
 const fixtureSha = sha256File(fixturePath);
 const fixture = readJson(fixturePath);
 const profile = fixture?.metadata?.hermes_system_one;
+const ledgerPath = requireFile(
+  join(systemOneDir, "consumption.jsonl"),
+  "System-One consumption ledger",
+);
+const markerPath = requireFile(
+  consumeMarkerPath(systemOneDir, report.pi_session_id, report.receipt_id),
+  "System-One consume marker",
+);
+const ledgerRaw = readFileSync(ledgerPath);
+const ledgerRows = readJsonLines(ledgerPath);
+const markerRaw = readFileSync(markerPath);
+const marker = JSON.parse(markerRaw.toString("utf8"));
 const rows = Array.isArray(report.evidence_rows) ? report.evidence_rows : [];
 const consumed = exactlyOne(rows, "consumed");
 const boundary = exactlyOne(rows, "turn_boundary_captured");
@@ -232,6 +296,25 @@ const replayRejected = replayRows.filter(
 const replayInfluence = replayRows.filter((row) =>
   INFLUENCE_OUTCOMES.has(row?.outcome),
 );
+const reportedRows = [...rows, ...replayRows];
+const ledgerRowsForReceipt = ledgerRows.filter(
+  (row) => row?.receipt_id === report.receipt_id,
+);
+const ledgerInfluenceForReceipt = ledgerRowsForReceipt.filter((row) =>
+  INFLUENCE_OUTCOMES.has(row?.outcome),
+);
+const ledgerReplayRejected = ledgerRowsForReceipt.filter(
+  (row) =>
+    row?.outcome === "ignored" &&
+    row?.reason === "replay_already_consumed",
+);
+const checkpointBytes = Number(report?.ledger_checkpoint?.bytes);
+const ledgerCheckpointPrefix =
+  Number.isInteger(checkpointBytes) &&
+  checkpointBytes >= 0 &&
+  checkpointBytes <= ledgerRaw.length
+    ? ledgerRaw.subarray(0, checkpointBytes)
+    : null;
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = args.get("expected-local-head") ?? null;
 const expectedMyJevHead = args.get("expected-my-jev-head") ?? null;
@@ -249,6 +332,34 @@ const assertions = {
   project_fingerprint_is_sha256: isSha256(report.project_fingerprint),
   fixture_raw_hash_matches_report:
     fixtureSha === report.fixture_raw_sha256,
+  producer_mode_matches_fixture_model:
+    (report.producer_mode === "fixture" && fixture?.model === "recorded/jev") ||
+    (report.producer_mode === "harnessrouter-script" && fixture?.model === "script/s1"),
+  ledger_checkpoint_shape:
+    Number.isInteger(checkpointBytes) &&
+    checkpointBytes > 0 &&
+    isSha256(report?.ledger_checkpoint?.sha256),
+  ledger_checkpoint_prefix_matches:
+    ledgerCheckpointPrefix !== null &&
+    sha256(ledgerCheckpointPrefix) === report?.ledger_checkpoint?.sha256,
+  report_rows_exist_in_durable_ledger:
+    rowsAppearInOrder(ledgerRows, reportedRows),
+  durable_ledger_has_single_influence_sequence:
+    ledgerInfluenceForReceipt.length === 4 &&
+    rowsAppearInOrder(ledgerInfluenceForReceipt, rows),
+  durable_ledger_has_replay_rejection:
+    ledgerReplayRejected.length >= 1,
+  consume_marker_hash_matches_report:
+    isSha256(report.consume_marker_sha256) &&
+    sha256(markerRaw) === report.consume_marker_sha256,
+  consume_marker_ids_match:
+    marker?.pi_session_id === report.pi_session_id &&
+    marker?.receipt_id === report.receipt_id &&
+    marker?.response_id === report.response_id,
+  consume_marker_response_hash_matches:
+    marker?.response_sha256 === fixtureSha,
+  consume_marker_receipt_hash_matches:
+    marker?.receipt_sha256 === canonicalSha256(profile),
   fixture_response_id_matches: fixture?.id === report.response_id,
   fixture_completed: fixture?.status === "completed",
   fixture_session_matches:
@@ -277,6 +388,8 @@ const assertions = {
     consumed?.receipt_id === report.receipt_id,
   consumed_raw_hash_matches_fixture:
     consumed?.response_sha256 === fixtureSha,
+  consumed_receipt_hash_matches_fixture:
+    consumed?.receipt_sha256 === canonicalSha256(profile),
   consumed_contract_matches:
     consumed?.contract_sha256 === CONTRACT_SHA256,
   consumed_harness_matches:
@@ -370,6 +483,10 @@ const result = {
   system_one_dir: systemOneDir,
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureSha,
+  consume_marker_path: markerPath,
+  consume_marker_sha256: sha256(markerRaw),
+  ledger_path: ledgerPath,
+  ledger_checkpoint: report.ledger_checkpoint,
   local_studio_head: report.local_studio_head,
   my_jev_head: report.my_jev_head,
   producer_mode: report.producer_mode,
