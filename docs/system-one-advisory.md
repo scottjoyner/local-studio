@@ -206,3 +206,69 @@ evidence record with the expected reason.
 
 This acceptance pass does not require a learned model, a fleet dispatch, a
 Neo4j mutation, or a live HarnessRouter deployment.
+
+
+## Receipt binding and single-use replay defense
+
+The canonical producer contract is pinned by SHA-256:
+
+`5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f`
+
+Local Studio rejects a response when `metadata.hermes_system_one.contract_sha256`
+does not exactly match that contract.
+
+A valid receipt must carry:
+
+```json
+{
+  "binding": {
+    "consumer": "local-studio",
+    "work_id": "work-...",
+    "consumer_session_id": "<exact active Pi session id>",
+    "project_fingerprint": "<sha256(normalized absolute cwd)>",
+    "snapshot_sha256": "<exact source heartbeat snapshot sha256>"
+  }
+}
+```
+
+Before injection Local Studio verifies:
+
+- `consumer == local-studio`
+- the consumer session id equals the canonical active Pi session
+- the project fingerprint equals the current resolved workspace
+- both binding hashes are valid lowercase SHA-256 values
+
+This means a fresh valid response generated for another Pi session or workspace
+is still rejected.
+
+After all validation passes, Local Studio atomically writes a consumption marker
+under:
+
+`<LOCAL_STUDIO_DATA_DIR>/system-one/consumed/`
+
+before prompt injection. The same response cannot be injected twice into the
+same Pi session, including after process restart. Re-presentation is logged as:
+
+`replay_already_consumed`
+
+A marker-write failure also fails closed and injects nothing.
+
+The consumption ledger now preserves the binding, contract hash, response hash,
+profile hash, served model, richer policy disposition, and advisory approval
+recommendation.
+
+## Expanded deterministic acceptance suite
+
+The matching `my-jev#2` fixture suite now includes:
+
+- valid -> consumed
+- expired -> ignored
+- authority-bearing -> ignored
+- model fallback -> ignored
+- wrong session -> `binding_session_mismatch`
+- wrong project -> `binding_project_mismatch`
+- wrong contract -> `contract_mismatch`
+- System-One refusal/escalation -> `system_one_handoff`
+
+A valid response consumed a second time should produce
+`replay_already_consumed`.
