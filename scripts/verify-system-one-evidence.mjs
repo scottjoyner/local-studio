@@ -1,8 +1,20 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 
 const CONTRACT_SHA256 =
   "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
@@ -142,6 +154,21 @@ function requireFile(path, label) {
   return path;
 }
 
+function requireBundleFile(systemOneDir, path, label) {
+  requireFile(path, label);
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(label + " must be a regular non-symlink file: " + path);
+  }
+  const root = realpathSync(systemOneDir);
+  const target = realpathSync(path);
+  const rel = relative(root, target);
+  if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+    throw new Error(label + " escapes the retained system-one bundle: " + path);
+  }
+  return path;
+}
+
 function consumeMarkerPath(systemOneDir, piSessionId, receiptId) {
   const key = sha256(piSessionId + "\0" + receiptId);
   return join(systemOneDir, "consumed", key + ".json");
@@ -192,14 +219,18 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   const sourceSnapshotPath = join(producerDir, "source-heartbeat-snapshot.json");
   const configPath = join(producerDir, "package", "config.yaml");
   const paths = [
-    producerReportPath,
-    recommendationPath,
-    tracePath,
-    storedResponsePath,
-    sourceSnapshotPath,
-    configPath,
+    [producerReportPath, "HarnessRouter producer report"],
+    [recommendationPath, "HarnessRouter recommendation"],
+    [tracePath, "HarnessRouter trace"],
+    [storedResponsePath, "HarnessRouter stored response"],
+    [sourceSnapshotPath, "HarnessRouter source snapshot"],
+    [configPath, "HarnessRouter System-One config"],
   ];
-  if (!paths.every((path) => existsSync(path))) {
+  try {
+    for (const [path, label] of paths) {
+      requireBundleFile(systemOneDir, path, label);
+    }
+  } catch {
     return {
       assertions: { producer_bundle_files_present: false },
       files: null,
@@ -320,18 +351,21 @@ if (
 const systemOneDir = args.get("system-one-dir")
   ? resolve(args.get("system-one-dir"))
   : dirname(dirname(reportPath));
-const fixturePath = requireFile(
+const fixturePath = requireBundleFile(
+  systemOneDir,
   join(systemOneDir, "sessions", report.pi_session_id + ".json"),
   "Bound UHP fixture",
 );
 const fixtureSha = sha256File(fixturePath);
 const fixture = readJson(fixturePath);
 const profile = fixture?.metadata?.hermes_system_one;
-const ledgerPath = requireFile(
+const ledgerPath = requireBundleFile(
+  systemOneDir,
   join(systemOneDir, "consumption.jsonl"),
   "System-One consumption ledger",
 );
-const markerPath = requireFile(
+const markerPath = requireBundleFile(
+  systemOneDir,
   consumeMarkerPath(systemOneDir, report.pi_session_id, report.receipt_id),
   "System-One consume marker",
 );
