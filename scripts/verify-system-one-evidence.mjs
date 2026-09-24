@@ -858,6 +858,15 @@ const producer = verifyProducer(
   fixtureSha,
 );
 Object.assign(assertions, producer.assertions);
+Object.assign(assertions, {
+  detached_signature_producer_copy_matches:
+    !signatureEvidencePresent ||
+    report.producer_mode !== "harnessrouter-script" ||
+    (
+      isSha256(producer?.files?.signature_sha256) &&
+      producer.files.signature_sha256 === signatureVerification?.signatureFileSha256
+    ),
+});
 
 const independentlyPasses = Object.values(assertions).every(Boolean);
 assertions.reported_verdict_matches_recomputed =
