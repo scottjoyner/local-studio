@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -53,6 +53,11 @@ function readLedger(filepath) {
 function canonicalProjectFingerprint(cwd) {
   const canonical = realpathSync(cwd).replaceAll("\\", "/").replace(/\/+$/, "") || "/";
   return sha256(canonical);
+}
+
+function consumeMarkerPath(systemOneDir, piSessionId, receiptId) {
+  const key = sha256(`${piSessionId}\0${receiptId}`);
+  return join(systemOneDir, "consumed", `${key}.json`);
 }
 
 function allAuthorityFalse(value) {
@@ -249,7 +254,7 @@ const nonce = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 17);
 const responseId = `resp_one_turn_${nonce}_${process.pid}`;
 const receiptId = `one-turn-${nonce}-${process.pid}`;
 const uhpSessionId = `hsess-one-turn-${nonce}`;
-const canary = `UHP_ONE_TURN_${nonce}_${process.pid}`;
+const canary = `UHP_ONE_TURN_${randomBytes(16).toString("hex")}`;
 const fixturePath = join(systemOneDir, "sessions", `${piSessionId}.json`);
 
 if (existsSync(fixturePath)) {
@@ -536,6 +541,16 @@ Object.assign(assertions, {
     replayAfter?.status?.piSessionId === piSessionId,
 });
 
+const markerPath = consumeMarkerPath(systemOneDir, piSessionId, receiptId);
+if (!existsSync(markerPath)) {
+  throw new Error(`Expected durable consume marker is missing: ${markerPath}`);
+}
+const markerRaw = readFileSync(markerPath);
+const ledgerRaw = existsSync(ledgerPath) ? readFileSync(ledgerPath) : Buffer.alloc(0);
+if (ledgerRaw.length === 0) {
+  throw new Error("System-One consumption ledger is empty after acceptance");
+}
+
 const verdict = Object.values(assertions).every(Boolean) ? "pass" : "fail";
 const report = {
   schema: "local-studio-system-one-one-turn-acceptance-v2",
@@ -557,6 +572,11 @@ const report = {
   task_focus_canary: canary,
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureRawSha256,
+  consume_marker_sha256: sha256(markerRaw),
+  ledger_checkpoint: {
+    bytes: ledgerRaw.length,
+    sha256: sha256(ledgerRaw),
+  },
   producer_evidence: producerEvidence,
   profile_hash_cross_language_comparison_deferred: true,
   command_outcome: command?.outcome ?? null,
