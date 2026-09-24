@@ -166,6 +166,33 @@ function safeJson(value: unknown): string | null {
   }
 }
 
+function assistantRenderedText(messages: unknown): string {
+  if (!Array.isArray(messages)) return "";
+  const chunks: string[] = [];
+  for (const entry of messages) {
+    const message = record(entry);
+    if (!message || message.role !== "assistant") continue;
+    if (typeof message.content === "string") {
+      chunks.push(message.content);
+      continue;
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (const rawPart of message.content) {
+      if (typeof rawPart === "string") {
+        chunks.push(rawPart);
+        continue;
+      }
+      const part = record(rawPart);
+      if (!part) continue;
+      const type = typeof part.type === "string" ? part.type : "";
+      if ((type === "text" || type === "output_text" || !type) && typeof part.text === "string") {
+        chunks.push(part.text);
+      }
+    }
+  }
+  return chunks.join("").trim();
+}
+
 function providerPayloadModel(payload: unknown): string | null {
   const body = record(payload);
   return body ? boundedString(body.model, 300) : null;
@@ -793,6 +820,7 @@ export function createSystemOneAdvisoryPromptExtension(
       const runtime = getContext();
       const endCwdFingerprint = runtime.cwd ? systemOneProjectFingerprint(runtime.cwd) : null;
       const messagesText = safeJson(event.messages);
+      const assistantText = assistantRenderedText(event.messages);
       appendLedger({
         at: new Date().toISOString(),
         outcome: "turn_completed",
@@ -820,6 +848,11 @@ export function createSystemOneAdvisoryPromptExtension(
           evidence.advisory.taskFocus == null
             ? null
             : messagesText?.includes(evidence.advisory.taskFocus) ?? false,
+        assistant_text_sha256: assistantText ? sha256(assistantText) : null,
+        task_focus_echo_exact:
+          evidence.advisory.taskFocus == null
+            ? null
+            : assistantText === evidence.advisory.taskFocus,
         authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
       });
       turnEvidence = null;
