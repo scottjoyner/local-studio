@@ -300,7 +300,6 @@ function appendLedger(entry: JsonRecord): void {
 function advisorySection(advisory: SystemOneAdvisory): string {
   const payload = {
     uhp_version: advisory.uhpVersion,
-    uhp_version: advisory.uhpVersion,
     response_id: advisory.responseId,
     uhp_session_id: advisory.uhpSessionId,
     harness_id: advisory.harnessId,
@@ -349,6 +348,7 @@ export function appendSystemOneAdvisoryPrompt(
     at: new Date().toISOString(),
     outcome: "consumed",
     pi_session_id: piSessionId,
+    uhp_version: advisory.uhpVersion,
     response_id: advisory.responseId,
     uhp_session_id: advisory.uhpSessionId,
     harness_id: advisory.harnessId,
