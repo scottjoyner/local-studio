@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveDataDir } from "./data-dir";
+import { verifyConfiguredSystemOneSignature } from "./system-one-signature";
 
 const PROFILE = "hermes-system-one-heartbeat-v1";
 const DEFAULT_HARNESS_ID = "chrn_system_one";
@@ -87,6 +88,11 @@ export type SystemOneAdvisory = {
   contextPriority: string[];
   fleetPriority: Array<{ handle: string; score: number; reason: string | null }>;
   provenance: JsonRecord;
+  signature: {
+    keyId: string;
+    publicKeySha256: string;
+    preimageSha256: string;
+  } | null;
   responseSha256: string;
   receiptSha256: string;
 };
@@ -241,11 +247,27 @@ function advisoryPaths(piSessionId: string): string[] {
   ];
 }
 
-function readCandidate(piSessionId: string): { raw: string; filepath: string } | null {
+function readCandidate(
+  piSessionId: string,
+): {
+  raw: string;
+  filepath: string;
+  signatureRaw: string | null | undefined;
+} | null {
   for (const filepath of advisoryPaths(piSessionId)) {
     if (!existsSync(filepath)) continue;
     try {
-      return { raw: readFileSync(filepath, "utf8"), filepath };
+      const raw = readFileSync(filepath, "utf8");
+      const signaturePath = `${filepath}.sig.json`;
+      let signatureRaw: string | null | undefined = null;
+      if (existsSync(signaturePath)) {
+        try {
+          signatureRaw = readFileSync(signaturePath, "utf8");
+        } catch {
+          signatureRaw = undefined;
+        }
+      }
+      return { raw, filepath, signatureRaw };
     } catch {
       return null;
     }
@@ -253,8 +275,29 @@ function readCandidate(piSessionId: string): { raw: string; filepath: string } |
   return null;
 }
 
-function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.now()): ReadResult {
+function validateResponse(
+  raw: string,
+  context: ConsumerContext,
+  signatureRaw: string | null,
+  nowMs = Date.now(),
+): ReadResult {
   const responseSha256 = sha256(raw);
+  const signatureVerification = verifyConfiguredSystemOneSignature(raw, signatureRaw);
+  if (signatureVerification.outcome === "rejected") {
+    return {
+      outcome: "ignored",
+      reason: signatureVerification.reason,
+      responseSha256,
+    };
+  }
+  const verifiedSignature =
+    signatureVerification.outcome === "verified"
+      ? {
+          keyId: signatureVerification.keyId,
+          publicKeySha256: signatureVerification.publicKeySha256,
+          preimageSha256: signatureVerification.preimageSha256,
+        }
+      : null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -534,6 +577,7 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
       contextPriority,
       fleetPriority,
       provenance,
+      signature: verifiedSignature,
       responseSha256,
       receiptSha256: canonicalSha256(profile),
     },
@@ -661,7 +705,18 @@ function consumeSystemOneAdvisoryPrompt(
   if (systemPrompt.includes(MARKER)) return null;
   const candidate = readCandidate(context.piSessionId);
   if (!candidate) return null;
-  const result = validateResponse(candidate.raw, context);
+  if (candidate.signatureRaw === undefined) {
+    appendLedger({
+      at: new Date().toISOString(),
+      outcome: "ignored",
+      pi_session_id: context.piSessionId,
+      cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
+      reason: "signature_read_error",
+      response_sha256: sha256(candidate.raw),
+    });
+    return null;
+  }
+  const result = validateResponse(candidate.raw, context, candidate.signatureRaw);
   if (result.outcome === "ignored") {
     appendLedger({
       at: new Date().toISOString(),
@@ -716,6 +771,10 @@ function consumeSystemOneAdvisoryPrompt(
     policy_disposition: advisory.policyDisposition,
     approval_recommended: advisory.approvalRecommended,
     fleet_handles: advisory.fleetPriority.map((item) => item.handle),
+    signature_verified: advisory.signature !== null,
+    signature_key_id: advisory.signature?.keyId ?? null,
+    signature_public_key_sha256: advisory.signature?.publicKeySha256 ?? null,
+    signature_preimage_sha256: advisory.signature?.preimageSha256 ?? null,
     authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
   }, true);
   if (!ledgerWritten) return null;
