@@ -369,6 +369,12 @@ const rocmSmi = command("rocm-smi", [
 const controller = value("--controller");
 const endpoint = value("--endpoint") ?? (controller ? `${controller.replace(/\/$/, "")}/v1` : null);
 const model = value("--model");
+const opencodeReceiptVerification = await verifyOpenCodeSessionEvidence({
+  receiptReference: opencodeReceiptReference,
+  exportReference: opencodeExportReference,
+  expectedModel: model,
+  requestedSessionIds: opencodeSessionIds,
+});
 const apiKeyEnv = value("--api-key-env", "LOCAL_STUDIO_API_KEY");
 const apiKey = process.env[apiKeyEnv] ?? "";
 const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
@@ -592,6 +598,7 @@ const manifest = {
           store: opencodeStore,
           endpointConfig: opencodeEndpointConfig,
           requestedSessionIds: opencodeSessionIds,
+          sessionEvidence: opencodeReceiptVerification,
         }
       : null,
     hermes: hermesRequested
@@ -659,10 +666,14 @@ const manifest = {
     const fileBackedSessionEvidenceCount = Object.values(
       fileBackedSessionEvidenceByAgent,
     ).reduce((sum, count) => sum + count, 0);
+    const opencodeSessionEvidenceAccepted = opencodeReceiptVerification?.accepted === true;
+    const hermesSessionEvidenceAccepted =
+      fileBackedSessionEvidenceByAgent.hermes > 0;
     const hashedBenchmarkEvidenceCount = benchmarkEvidence.filter(
       (entry) => entry.type === "file" && typeof entry.sha256 === "string",
     ).length;
-    const sessionEvidenceAccepted = fileBackedSessionEvidenceCount > 0;
+    const sessionEvidenceAccepted =
+      opencodeSessionEvidenceAccepted || hermesSessionEvidenceAccepted;
     const localStudioRevision =
       sourceRevision.status === 0 && /^[0-9a-f]{40}$/i.test(sourceRevision.stdout)
         ? sourceRevision.stdout.toLowerCase()
@@ -709,6 +720,8 @@ const manifest = {
       engineArtifactAccepted,
       artifactProvenanceAccepted,
       sessionEvidenceAccepted,
+      opencodeSessionEvidenceAccepted,
+      hermesSessionEvidenceAccepted,
       benchmarkEvidenceAccepted,
       liveBenchmarkAccepted,
       candidatePromotable,
