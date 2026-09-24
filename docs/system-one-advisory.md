@@ -359,6 +359,47 @@ node scripts/system-one-one-turn-acceptance.mjs \
   --snapshot-sha256 '<exact heartbeat snapshot sha256>'
 ```
 
+The default `--producer fixture` mode is the smallest consumer-boundary proof.
+It uses my-jev's deterministic recorded UHP fixture and proves that the stored
+response reaches one provider-bound coding-agent turn without changing Local
+Studio's model, tool, cwd, or authority boundary.
+
+For the full deterministic producer + consumer chain, use the HarnessRouter
+scripted producer:
+
+```bash
+node scripts/system-one-one-turn-acceptance.mjs \
+  --producer harnessrouter-script \
+  --model '<existing Local Studio coding model id>' \
+  --cwd /absolute/path/to/project \
+  --data-dir /tmp/local-studio-uhp-acceptance \
+  --my-jev-repo /absolute/path/to/my-jev \
+  --snapshot /tmp/hermes-heartbeat.json \
+  --snapshot-sha256 '<exact heartbeat snapshot sha256>' \
+  --harnessrouter-repo /absolute/path/to/harnessrouter \
+  --harnessrouter-python /path/to/harnessrouter/runner/python
+```
+
+The runtime under test must use the same isolated
+`LOCAL_STUDIO_DATA_DIR=/tmp/local-studio-uhp-acceptance`. The heartbeat
+snapshot must be fresh and its supplied SHA-256 must match the producer probe.
+
+In `harnessrouter-script` mode the harness first establishes the canonical Pi
+session, then calls `my-jev-harnessrouter-probe`. That probe requires
+`HarnessRouter/harnessrouter@250de65d6e690abdef40e39d21591b4a807984a3`,
+runs the parameterized System-One scripted provider with no provider network
+call, verifies the terminal recommendation and trace, compiles the bound UHP
+response, and returns it to this consumer acceptance.
+
+The final report records `producer_mode` and embeds the producer evidence. The
+producer sub-report and trace are retained beneath:
+
+`<LOCAL_STUDIO_DATA_DIR>/system-one/producer/<response-id>/`
+
+so the deterministic chain can be audited as one evidence package:
+
+`heartbeat snapshot -> finite MCP -> HarnessRouter scripted System-One -> recommendation -> bound UHP response -> one Local Studio coding turn`.
+
 The harness deliberately uses three phases:
 
 1. a bootstrap prompt with no advisory present, solely to establish the canonical
