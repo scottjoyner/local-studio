@@ -14,6 +14,7 @@ import {
   join,
   relative,
   resolve,
+  sep,
 } from "node:path";
 
 const CONTRACT_SHA256 =
@@ -163,7 +164,7 @@ function requireBundleFile(systemOneDir, path, label) {
   const root = realpathSync(systemOneDir);
   const target = realpathSync(path);
   const rel = relative(root, target);
-  if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
     throw new Error(label + " escapes the retained system-one bundle: " + path);
   }
   return path;
