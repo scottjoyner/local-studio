@@ -13,6 +13,17 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const RUNTIME_PROVENANCE_FILES = [
+  "services/agent-runtime/src/runtime-provenance.ts",
+  "services/agent-runtime/src/system-one-advisory.ts",
+  "services/agent-runtime/src/pi-runtime.ts",
+  "services/agent-runtime/src/pi-runtime-types.ts",
+  "services/agent-runtime/src/http/handlers.ts",
+  "services/agent-runtime/src/server.ts",
+  "services/agent-runtime/package.json",
+  "services/agent-runtime/bun.lock",
+];
+
 function parseArgs(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
@@ -181,6 +192,54 @@ function snapshotStatus(status) {
   };
 }
 
+function validateRuntimeProvenance(provenance, expectedHead, repoRoot) {
+  if (!provenance || typeof provenance !== "object") {
+    throw new Error("Agent runtime did not expose startup provenance");
+  }
+  if (provenance.schema !== "local-studio-agent-runtime-provenance-v1") {
+    throw new Error(`Unexpected agent-runtime provenance schema: ${provenance.schema ?? "null"}`);
+  }
+  if (provenance.git_head !== expectedHead) {
+    throw new Error(
+      `Running agent-runtime head drift: expected ${expectedHead}, got ${provenance.git_head ?? "null"}`,
+    );
+  }
+  if (provenance.source_clean !== true) {
+    throw new Error("Running agent-runtime was built/started from a dirty source tree");
+  }
+  if (!["built", "source"].includes(provenance.mode)) {
+    throw new Error(`Agent-runtime provenance is unverified: ${provenance.mode ?? "null"}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(provenance.manifest_sha256 ?? "")) {
+    throw new Error("Agent-runtime provenance manifest hash is missing or invalid");
+  }
+  if (!provenance.files || typeof provenance.files !== "object") {
+    throw new Error("Agent-runtime provenance has no critical source hashes");
+  }
+  for (const relativePath of RUNTIME_PROVENANCE_FILES) {
+    const expected = sha256(readFileSync(join(repoRoot, relativePath)));
+    const observed = provenance.files[relativePath];
+    if (observed !== expected) {
+      throw new Error(
+        `Running agent-runtime source drift for ${relativePath}: expected ${expected}, got ${observed ?? "null"}`,
+      );
+    }
+  }
+  return provenance;
+}
+
+function sameRuntimeProvenance(left, right) {
+  return (
+    left?.schema === right?.schema &&
+    left?.git_head === right?.git_head &&
+    left?.source_clean === right?.source_clean &&
+    left?.mode === right?.mode &&
+    left?.started_at === right?.started_at &&
+    left?.manifest_sha256 === right?.manifest_sha256 &&
+    JSON.stringify(left?.files ?? null) === JSON.stringify(right?.files ?? null)
+  );
+}
+
 const args = parseArgs(process.argv.slice(2));
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const localStudioRoot = resolve(scriptDir, "..");
@@ -237,6 +296,11 @@ if (existsSync(latestPath)) {
 
 const beforeBootstrapLedger = readLedger(ledgerPath);
 let initial = await runtimeStatus(baseUrl, runtimeSessionId);
+const runtimeProvenance = validateRuntimeProvenance(
+  initial?.runtimeProvenance,
+  localStudioHeadBefore,
+  localStudioRoot,
+);
 let piSessionId = initial?.status?.piSessionId ?? null;
 
 if (!piSessionId) {
@@ -251,6 +315,9 @@ if (!piSessionId) {
   });
   const bootstrapSeq = Number(bootstrap?.status?.eventSeq ?? initial?.status?.eventSeq ?? -1);
   initial = await waitForIdle(baseUrl, runtimeSessionId, bootstrapSeq - 1, timeoutMs);
+  if (!sameRuntimeProvenance(runtimeProvenance, initial?.runtimeProvenance)) {
+    throw new Error("Agent-runtime provenance changed during bootstrap");
+  }
   piSessionId = initial?.status?.piSessionId ?? bootstrap?.piSessionId ?? null;
 }
 
@@ -455,6 +522,12 @@ const after = await waitForIdle(
   timeoutMs,
 );
 const afterStatus = after.status;
+if (!sameRuntimeProvenance(runtimeProvenance, before?.runtimeProvenance)) {
+  throw new Error("Agent-runtime provenance changed before the acceptance turn");
+}
+if (!sameRuntimeProvenance(runtimeProvenance, after?.runtimeProvenance)) {
+  throw new Error("Agent-runtime provenance changed during the acceptance turn");
+}
 const evidenceRows = readLedger(ledgerPath)
   .slice(ledgerStart)
   .filter((row) => row.response_id === responseId);
@@ -511,6 +584,11 @@ const assertions = {
   runtime_pi_session_unchanged:
     beforeStatus.piSessionId === piSessionId &&
     afterStatus.piSessionId === piSessionId,
+  runtime_provenance_exact_head:
+    runtimeProvenance.git_head === localStudioHeadBefore,
+  runtime_provenance_clean: runtimeProvenance.source_clean === true,
+  runtime_provenance_verified_mode:
+    runtimeProvenance.mode === "built" || runtimeProvenance.mode === "source",
   producer_model_is_not_coding_model:
     consumed?.served_model === expectedProducerModel && consumed?.served_model !== modelId,
   producer_raw_response_matches_fixture:
@@ -548,6 +626,12 @@ const replayAfter = await waitForIdle(
   Number(replayBefore?.status?.eventSeq ?? -1),
   timeoutMs,
 );
+if (!sameRuntimeProvenance(runtimeProvenance, replayBefore?.runtimeProvenance)) {
+  throw new Error("Agent-runtime provenance changed before replay control");
+}
+if (!sameRuntimeProvenance(runtimeProvenance, replayAfter?.runtimeProvenance)) {
+  throw new Error("Agent-runtime provenance changed during replay control");
+}
 const replayRows = readLedger(ledgerPath).slice(replayLedgerStart);
 const replayForReceipt = replayRows.filter((row) => row.receipt_id === receiptId);
 const replayIgnored = replayForReceipt.find(
@@ -603,6 +687,8 @@ const report = {
   generated_at: new Date().toISOString(),
   local_studio_head: localStudioHeadBefore,
   my_jev_head: myJevHeadBefore,
+  runtime_provenance: runtimeProvenance,
+  runtime_provenance_sha256: sha256(JSON.stringify(runtimeProvenance)),
   source_checkouts_clean: true,
   source_heads_stable: true,
   producer_mode: producerMode,
