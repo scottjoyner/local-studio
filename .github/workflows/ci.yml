@@ -49,8 +49,16 @@ jobs:
           bash -n scripts/validate-bonsai2-r9700.sh
           node --check scripts/render-r9700-bonsai-registry-candidate.mjs
           node --check scripts/render-r9700-bonsai-registry-candidate.test.mjs
+          bash -n scripts/build-r9700-bonsai2-rocm-image.sh
+          bash -n packaging/r9700-bonsai2-rocm/entrypoint.sh
+          bash -n packaging/r9700-bonsai2-rocm/omp-acquire.sh
+          node --check scripts/record-r9700-bonsai2-published-image.mjs
+          node --check scripts/render-r9700-bonsai-omarchy-candidate.mjs
+          node --check scripts/render-r9700-bonsai-omarchy-candidate.test.mjs
       - name: Registry handoff contract
         run: node scripts/render-r9700-bonsai-registry-candidate.test.mjs
+      - name: Omarchy package contract
+        run: node scripts/render-r9700-bonsai-omarchy-candidate.test.mjs
 
   controller:
     if: github.event_name != 'schedule'
