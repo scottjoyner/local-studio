@@ -305,6 +305,9 @@ class PiSdkSession extends EventEmitter implements PiAgentSession {
                                 factory: createSystemOneAdvisoryPromptExtension(() => ({
                                   piSessionId: sessionManager.getSessionId(),
                                   cwd,
+                                  selectedModelId: modelId,
+                                  providerId,
+                                  backendModelId,
                                 })),
                               },
                             ],
