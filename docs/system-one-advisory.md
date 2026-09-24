@@ -77,8 +77,9 @@ For Pi session `<session-id>`, the runtime checks the first existing path in thi
 
 No network request occurs from the turn hook.
 
-The default maximum receipt TTL is 900 seconds. It can be reduced or raised with
-`LOCAL_STUDIO_SYSTEM_ONE_MAX_TTL_SECONDS`, capped at 3600 seconds.
+The contract maximum receipt TTL is 900 seconds. It can be reduced with
+`LOCAL_STUDIO_SYSTEM_ONE_MAX_TTL_SECONDS`, but configuration cannot widen it
+above 900 seconds.
 
 ## Fail-closed rules
 
