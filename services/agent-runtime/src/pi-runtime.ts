@@ -30,6 +30,7 @@ import {
 import { getProviderHub } from "./provider-hub";
 import { attachGoalDriver } from "./goal-driver";
 import { createGoalPromptExtension } from "./goal-prompt";
+import { createSystemOneAdvisoryPromptExtension } from "./system-one-advisory";
 import { findRuntimeSessionForLookup, piStatusFromEvents } from "./pi-runtime-state";
 import { configuredPiSessionDir, findSessionFile } from "./sessions-store";
 import { getGlobalSingleton } from "./instances";
@@ -296,6 +297,12 @@ class PiSdkSession extends EventEmitter implements PiAgentSession {
                               {
                                 name: "local-studio-goal",
                                 factory: createGoalPromptExtension(() =>
+                                  sessionManager.getSessionId(),
+                                ),
+                              },
+                              {
+                                name: "local-studio-system-one-advisory",
+                                factory: createSystemOneAdvisoryPromptExtension(() =>
                                   sessionManager.getSessionId(),
                                 ),
                               },
