@@ -214,6 +214,8 @@ try {
     verdict: "pass",
     local_studio_head: localStudioHead,
     my_jev_head: myJevHead,
+    source_checkouts_clean: true,
+    source_heads_stable: true,
     producer_mode: "fixture",
     snapshot_sha256: snapshotSha256,
     project_fingerprint: projectFingerprint,
