@@ -61,16 +61,16 @@ function configuredBoolean(value: string | undefined): boolean | null {
   return null;
 }
 
-function loadPolicy(): SignaturePolicy {
+function loadPolicy(env: NodeJS.ProcessEnv): SignaturePolicy {
   const required = configuredBoolean(
-    process.env.LOCAL_STUDIO_SYSTEM_ONE_REQUIRE_SIGNATURE,
+    env.LOCAL_STUDIO_SYSTEM_ONE_REQUIRE_SIGNATURE,
   );
   if (required === null) {
     return { mode: "invalid", reason: "signature_policy_invalid" };
   }
 
   const keyPath =
-    process.env.LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH?.trim() || "";
+    env.LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH?.trim() || "";
   if (!keyPath) {
     return required
       ? { mode: "invalid", reason: "signature_key_unconfigured" }
@@ -98,25 +98,31 @@ function loadPolicy(): SignaturePolicy {
   }
 }
 
-const SIGNATURE_POLICY = loadPolicy();
-
-export function verifyConfiguredSystemOneSignature(
+export function createSystemOneSignatureVerifier(
+  env: NodeJS.ProcessEnv,
+): (
   responseRaw: string,
   signatureRaw: string | null,
-): SystemOneSignatureVerification {
-  if (SIGNATURE_POLICY.mode === "invalid") {
-    return { outcome: "rejected", reason: SIGNATURE_POLICY.reason };
-  }
+) => SystemOneSignatureVerification {
+  const policy = loadPolicy(env);
 
-  if (signatureRaw == null) {
-    return SIGNATURE_POLICY.mode === "required"
-      ? { outcome: "rejected", reason: "signature_required" }
-      : { outcome: "unsigned" };
-  }
+  return (
+    responseRaw: string,
+    signatureRaw: string | null,
+  ): SystemOneSignatureVerification => {
+    if (policy.mode === "invalid") {
+      return { outcome: "rejected", reason: policy.reason };
+    }
 
-  if (SIGNATURE_POLICY.mode !== "required") {
-    return { outcome: "rejected", reason: "signature_key_unconfigured" };
-  }
+    if (signatureRaw == null) {
+      return policy.mode === "required"
+        ? { outcome: "rejected", reason: "signature_required" }
+        : { outcome: "unsigned" };
+    }
+
+    if (policy.mode !== "required") {
+      return { outcome: "rejected", reason: "signature_key_unconfigured" };
+    }
 
   let parsed: unknown;
   try {
@@ -148,7 +154,7 @@ export function verifyConfiguredSystemOneSignature(
   if (envelope.domain !== SYSTEM_ONE_SIGNATURE_DOMAIN) {
     return { outcome: "rejected", reason: "signature_domain_mismatch" };
   }
-  if (envelope.key_id !== SIGNATURE_POLICY.keyId) {
+  if (envelope.key_id !== policy.keyId) {
     return { outcome: "rejected", reason: "signature_key_id_mismatch" };
   }
 
@@ -184,15 +190,25 @@ export function verifyConfiguredSystemOneSignature(
     return { outcome: "rejected", reason: "signature_encoding_invalid" };
   }
 
-  if (!verifySignature(null, preimage, SIGNATURE_POLICY.key, signature)) {
+  if (!verifySignature(null, preimage, policy.key, signature)) {
     return { outcome: "rejected", reason: "signature_invalid" };
   }
 
-  return {
-    outcome: "verified",
-    keyId: SIGNATURE_POLICY.keyId,
-    publicKeySha256: SIGNATURE_POLICY.publicKeySha256,
-    responseSha256,
-    preimageSha256,
+    return {
+      outcome: "verified",
+      keyId: policy.keyId,
+      publicKeySha256: policy.publicKeySha256,
+      responseSha256,
+      preimageSha256,
+    };
   };
+}
+
+const CONFIGURED_SIGNATURE_VERIFIER = createSystemOneSignatureVerifier(process.env);
+
+export function verifyConfiguredSystemOneSignature(
+  responseRaw: string,
+  signatureRaw: string | null,
+): SystemOneSignatureVerification {
+  return CONFIGURED_SIGNATURE_VERIFIER(responseRaw, signatureRaw);
 }
