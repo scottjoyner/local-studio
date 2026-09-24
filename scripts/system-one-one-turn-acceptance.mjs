@@ -261,6 +261,9 @@ const harnessrouterRepo = args.get("harnessrouter-repo")
   ? realpathSync(args.get("harnessrouter-repo"))
   : null;
 const harnessrouterPython = args.get("harnessrouter-python") ?? python;
+const producerSigningKey = args.get("producer-signing-key")
+  ? realpathSync(args.get("producer-signing-key"))
+  : null;
 const localStudioHeadBefore = requireCleanGitCheckout(
   localStudioRoot,
   "Local Studio",
@@ -274,6 +277,9 @@ if (producerMode === "harnessrouter-script" && (!snapshotPath || !harnessrouterR
   throw new Error(
     "--producer harnessrouter-script requires --snapshot and --harnessrouter-repo",
   );
+}
+if (producerSigningKey && producerMode !== "harnessrouter-script") {
+  throw new Error("--producer-signing-key is supported only with harnessrouter-script");
 }
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
@@ -352,8 +358,9 @@ const receiptId = `one-turn-${nonce}-${process.pid}`;
 const uhpSessionId = `hsess-one-turn-${nonce}`;
 const canary = `UHP_ONE_TURN_${randomBytes(16).toString("hex")}`;
 const fixturePath = join(systemOneDir, "sessions", `${piSessionId}.json`);
+const fixtureSignaturePath = `${fixturePath}.sig.json`;
 
-if (existsSync(fixturePath)) {
+if (existsSync(fixturePath) || existsSync(fixtureSignaturePath)) {
   throw new Error(
     `Refusing to overwrite existing session advisory fixture: ${fixturePath}. Use a fresh runtime session/data directory.`,
   );
@@ -458,6 +465,7 @@ if (producerMode === "fixture") {
     "600",
     "--task-focus",
     canary,
+    ...(producerSigningKey ? ["--signing-key", producerSigningKey] : []),
   ];
   producer = spawnSync(python, producerArgs, {
     cwd: myJevRepo,
@@ -493,11 +501,24 @@ if (producerMode === "fixture") {
     throw new Error("HarnessRouter producer did not expose its stored UHP response");
   }
   copyFileSync(producedResponse, fixturePath);
+  if (producerSigningKey) {
+    const producedSignature = producerEvidence?.producer_signature_file;
+    if (!producedSignature || !existsSync(producedSignature)) {
+      throw new Error("HarnessRouter producer did not expose its detached signature file");
+    }
+    if (!producerEvidence?.producer_signature?.key_id) {
+      throw new Error("HarnessRouter producer signature evidence is incomplete");
+    }
+    copyFileSync(producedSignature, fixtureSignaturePath);
+  }
   expectedProducerModel = "script/s1";
 }
 
 const fixtureRaw = readFileSync(fixturePath, "utf8");
 const fixtureRawSha256 = sha256(fixtureRaw);
+const fixtureSignatureSha256 = existsSync(fixtureSignaturePath)
+  ? sha256(readFileSync(fixtureSignaturePath))
+  : null;
 const ledgerStart = readLedger(ledgerPath).length;
 const before = await runtimeStatus(baseUrl, runtimeSessionId);
 const beforeStatus = before.status;
@@ -595,6 +616,21 @@ const assertions = {
   producer_raw_response_matches_fixture:
     producerMode !== "harnessrouter-script" ||
     producerEvidence?.stored_response_raw_sha256 === fixtureRawSha256,
+  producer_signature_file_matches_when_requested:
+    !producerSigningKey ||
+    (
+      fixtureSignatureSha256 != null &&
+      producerEvidence?.producer_signature_file_sha256 === fixtureSignatureSha256
+    ),
+  producer_signature_verified_when_requested:
+    !producerSigningKey ||
+    (
+      consumed?.signature_verified === true &&
+      consumed?.signature_key_id === producerEvidence?.producer_signature?.key_id &&
+      consumed?.signature_preimage_sha256 ===
+        producerEvidence?.producer_signature?.preimage_sha256 &&
+      producerEvidence?.producer_signature?.response_sha256 === fixtureRawSha256
+    ),
   contract_hash_matches_expected:
     consumed?.contract_sha256 ===
     "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
@@ -706,6 +742,9 @@ const report = {
   task_focus_canary: canary,
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureRawSha256,
+  producer_signature_required: Boolean(producerSigningKey),
+  fixture_signature_path: fixtureSignatureSha256 ? fixtureSignaturePath : null,
+  fixture_signature_sha256: fixtureSignatureSha256,
   consume_marker_sha256: sha256(markerRaw),
   ledger_checkpoint: {
     bytes: ledgerRaw.length,
