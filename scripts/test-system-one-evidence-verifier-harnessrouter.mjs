@@ -436,11 +436,35 @@ try {
     cwd: projectCwd,
     piSessionId: piSession,
   };
+  const runtimeFiles = Object.fromEntries(
+    [
+      "services/agent-runtime/src/runtime-provenance.ts",
+      "services/agent-runtime/src/system-one-advisory.ts",
+      "services/agent-runtime/src/pi-runtime.ts",
+      "services/agent-runtime/src/pi-runtime-types.ts",
+      "services/agent-runtime/src/http/handlers.ts",
+      "services/agent-runtime/src/server.ts",
+      "services/agent-runtime/package.json",
+      "services/agent-runtime/bun.lock",
+    ].map((key, index) => [key, String(index + 1).repeat(64).slice(0, 64)]),
+  );
+  const runtimeProvenance = {
+    schema: "local-studio-agent-runtime-provenance-v1",
+    git_head: localStudioHead,
+    source_clean: true,
+    files: runtimeFiles,
+    mode: "built",
+    started_at: "2026-09-24T12:00:00.000Z",
+    manifest_sha256: "8".repeat(64),
+  };
+
   const report = {
     schema: "local-studio-system-one-one-turn-acceptance-v2",
     verdict: "pass",
     local_studio_head: localStudioHead,
     my_jev_head: myJevHead,
+    runtime_provenance: runtimeProvenance,
+    runtime_provenance_sha256: sha256(JSON.stringify(runtimeProvenance)),
     source_checkouts_clean: true,
     source_heads_stable: true,
     producer_mode: "harnessrouter-script",
