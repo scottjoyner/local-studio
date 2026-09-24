@@ -266,6 +266,14 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
         SYSTEMONE_PACKAGE_MANIFEST_SHA256,
       producer_systemone_config_pinned:
         producer.systemone_config_sha256 === SYSTEMONE_CONFIG_SHA256,
+      producer_harnessrouter_python_isolated:
+        producer?.harnessrouter_python?.isolated === true &&
+        producer?.harnessrouter_python?.ignore_environment === true &&
+        producer?.harnessrouter_python?.no_site === true &&
+        producer?.harnessrouter_python?.startup_mode ===
+          "python -I -S with explicit site-packages sys.path",
+      producer_harnessrouter_python_hash_present:
+        isSha256(producer?.harnessrouter_python?.executable_sha256),
       producer_my_jev_head_matches: producer.my_jev_head === report.my_jev_head,
       producer_source_checkouts_clean:
         producer.source_checkouts_clean === true,
@@ -337,6 +345,8 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       source_snapshot_raw_sha256: sha256File(sourceSnapshotPath),
       source_snapshot_canonical_sha256: canonicalSha256(sourceSnapshot),
       systemone_config_sha256: sha256File(configPath),
+      harnessrouter_python_executable_sha256:
+        producer?.harnessrouter_python?.executable_sha256 ?? null,
     },
   };
 }
