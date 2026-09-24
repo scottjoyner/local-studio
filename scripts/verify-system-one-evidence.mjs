@@ -102,6 +102,19 @@ function isGitSha(value) {
   return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 }
 
+function isSafePathSegment(value, maxLength = 256) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("\0") &&
+    value !== "." &&
+    value !== ".."
+  );
+}
+
 function allAuthorityFalse(value) {
   return (
     value !== null &&
@@ -297,6 +310,13 @@ const reportPath = resolve(required(args, "report"));
 requireFile(reportPath, "Acceptance report");
 
 const report = readJson(reportPath);
+if (
+  !isSafePathSegment(report.pi_session_id) ||
+  !isSafePathSegment(report.response_id) ||
+  !String(report.response_id).startsWith("resp_")
+) {
+  throw new Error("Acceptance report contains unsafe session/response identifiers");
+}
 const systemOneDir = args.get("system-one-dir")
   ? resolve(args.get("system-one-dir"))
   : dirname(dirname(reportPath));
@@ -457,8 +477,14 @@ const assertions = {
     provider?.task_focus_sha256 === canarySha,
   provider_model_matches_expected:
     provider?.provider_model_matches_expected === true,
+  provider_model_equality_recomputed:
+    provider?.provider_model === provider?.expected_backend_model_id &&
+    provider?.expected_backend_model_id === boundary?.backend_model_id,
   provider_tools_match_active:
     provider?.provider_tools_match_active === true,
+  provider_tools_equality_recomputed:
+    sameStrings(provider?.provider_tools, boundary?.active_tools) &&
+    sameStrings(provider?.active_tools, boundary?.active_tools),
   provider_request_hash_present:
     isSha256(provider?.provider_request_sha256),
   completed_provider_request_count_one:
@@ -473,10 +499,26 @@ const assertions = {
     completed?.assistant_text_sha256 === canarySha,
   completed_model_unchanged:
     completed?.selected_model_unchanged === true,
+  completed_model_equality_recomputed:
+    completed?.selected_model_id_before === boundary?.selected_model_id &&
+    completed?.selected_model_id_after === boundary?.selected_model_id,
   completed_route_unchanged:
     completed?.provider_route_unchanged === true,
+  completed_route_equality_recomputed:
+    completed?.provider_id_before === boundary?.provider_id &&
+    completed?.provider_id_after === boundary?.provider_id &&
+    completed?.backend_model_id_before === boundary?.backend_model_id &&
+    completed?.backend_model_id_after === boundary?.backend_model_id,
   completed_cwd_unchanged:
     completed?.cwd_unchanged === true,
+  completed_cwd_equality_recomputed:
+    completed?.cwd_fingerprint_before === boundary?.cwd_fingerprint &&
+    completed?.cwd_fingerprint_after === boundary?.cwd_fingerprint,
+  completed_tools_equality_recomputed:
+    sameStrings(completed?.active_tools_at_injection, boundary?.active_tools) &&
+    completed?.active_tools_sha256 === canonicalSha256(
+      [...new Set(boundary?.active_tools ?? [])].sort(),
+    ),
   completed_authority_all_false:
     allAuthorityFalse(completed?.authority),
   runtime_before_model_matches:
