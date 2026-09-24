@@ -166,17 +166,15 @@ function safeJson(value: unknown): string | null {
   }
 }
 
-function assistantRenderedText(messages: unknown): string {
+function latestAssistantRenderedText(messages: unknown): string {
   if (!Array.isArray(messages)) return "";
-  const chunks: string[] = [];
-  for (const entry of messages) {
-    const message = record(entry);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = record(messages[index]);
     if (!message || message.role !== "assistant") continue;
-    if (typeof message.content === "string") {
-      chunks.push(message.content);
-      continue;
-    }
-    if (!Array.isArray(message.content)) continue;
+    if (typeof message.content === "string") return message.content.trim();
+    if (!Array.isArray(message.content)) return "";
+
+    const chunks: string[] = [];
     for (const rawPart of message.content) {
       if (typeof rawPart === "string") {
         chunks.push(rawPart);
@@ -189,8 +187,9 @@ function assistantRenderedText(messages: unknown): string {
         chunks.push(part.text);
       }
     }
+    return chunks.join("").trim();
   }
-  return chunks.join("").trim();
+  return "";
 }
 
 function providerPayloadModel(payload: unknown): string | null {
@@ -820,7 +819,7 @@ export function createSystemOneAdvisoryPromptExtension(
       const runtime = getContext();
       const endCwdFingerprint = runtime.cwd ? systemOneProjectFingerprint(runtime.cwd) : null;
       const messagesText = safeJson(event.messages);
-      const assistantText = assistantRenderedText(event.messages);
+      const assistantText = latestAssistantRenderedText(event.messages);
       appendLedger({
         at: new Date().toISOString(),
         outcome: "turn_completed",
