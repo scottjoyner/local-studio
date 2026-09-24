@@ -53,7 +53,6 @@ const minCompletedTools = Number(value("--min-completed-tools", "1"));
 const requiredTools = values("--require-tool");
 
 if (!expectedModel) throw new Error("--expected-model is required");
-if (!expectedProvider) throw new Error("--expected-provider is required");
 if (!Number.isInteger(minCompletedTools) || minCompletedTools < 1 || minCompletedTools > 100) {
   throw new Error("--min-completed-tools must be an integer from 1 to 100");
 }
@@ -138,8 +137,15 @@ const models = turnAssistants.map((message) => ({
   modelID: message.info.modelID ?? null,
 }));
 
+const providerAccepted =
+  typeof expectedProvider === "string" &&
+  expectedProvider.length > 0 &&
+  models.length > 0 &&
+  models.every((entry) => entry.providerID === expectedProvider);
 const fallbackDetected = models.some(
-  (entry) => entry.providerID !== expectedProvider || entry.modelID !== expectedModel,
+  (entry) =>
+    entry.modelID !== expectedModel ||
+    (expectedProvider ? entry.providerID !== expectedProvider : false),
 );
 const assistantErrors = turnAssistants
   .filter((message) => message?.info?.error)
@@ -166,9 +172,13 @@ const completedToolNames = new Set(
 const requiredToolsAccepted = requiredTools.every((tool) => completedToolNames.has(tool));
 const toolRoundTripAccepted =
   completedTools.length >= minCompletedTools && requiredToolsAccepted;
-const modelAccepted = turnAssistants.length > 0 && !fallbackDetected;
+const modelAccepted =
+  turnAssistants.length > 0 &&
+  models.every((entry) => entry.modelID === expectedModel);
 const accepted =
   modelAccepted &&
+  providerAccepted &&
+  !fallbackDetected &&
   toolRoundTripAccepted &&
   assistantErrors.length === 0;
 
@@ -205,6 +215,7 @@ const receipt = {
     fallbackDetected,
     assistantErrors,
     modelAccepted,
+    providerAccepted,
     requiredToolsAccepted,
     toolRoundTripAccepted,
   },
