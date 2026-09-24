@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  sign,
+} from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -69,20 +73,18 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
-function runVerifier(verifier, report, localHead, myJevHead) {
-  return spawnSync(
-    process.execPath,
-    [
-      verifier,
-      "--report",
-      report,
-      "--expected-local-head",
-      localHead,
-      "--expected-my-jev-head",
-      myJevHead,
-    ],
-    { encoding: "utf8" },
-  );
+function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = null) {
+  const args = [
+    verifier,
+    "--report",
+    report,
+    "--expected-local-head",
+    localHead,
+    "--expected-my-jev-head",
+    myJevHead,
+  ];
+  if (publicKeyPath) args.push("--producer-public-key", publicKeyPath);
+  return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -272,6 +274,40 @@ try {
     throw new Error("Synthetic config bytes drifted from the pinned hash");
   }
 
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const publicKeyPath = join(root, "producer-public.pem");
+  writeFileSync(
+    publicKeyPath,
+    publicKey.export({ type: "spki", format: "pem" }),
+  );
+  const responseBytes = readFileSync(producerStoredPath);
+  const signatureDomain = "hermes-system-one-uhp-response-bytes-ed25519-v1";
+  const signaturePreimage = Buffer.concat([
+    Buffer.from(signatureDomain + "\0", "utf8"),
+    responseBytes,
+  ]);
+  const keyDer = publicKey.export({ type: "spki", format: "der" });
+  const signatureEnvelope = {
+    schema: "hermes-system-one-detached-signature-v1",
+    scheme: "ed25519",
+    domain: signatureDomain,
+    key_id: "ed25519:" + sha256(keyDer),
+    response_sha256: sha256(responseBytes),
+    preimage_sha256: sha256(signaturePreimage),
+    signature_b64: sign(null, signaturePreimage, privateKey).toString("base64"),
+  };
+  const producerSignaturePath = join(
+    producerDir,
+    "stored-uhp-response.json.sig.json",
+  );
+  writeFileSync(
+    producerSignaturePath,
+    JSON.stringify(signatureEnvelope, null, 2) + "\n",
+    "utf8",
+  );
+  const fixtureSignaturePath = fixturePath + ".sig.json";
+  writeFileSync(fixtureSignaturePath, readFileSync(producerSignaturePath));
+
   const producerReport = {
     schema: "my-jev-harnessrouter-script-probe-v1",
     verdict: "pass",
@@ -329,6 +365,9 @@ try {
     response_sha256: canonicalSha256(stored),
     stored_response_raw_sha256: sha256(readFileSync(producerStoredPath)),
     stored_response: producerStoredPath,
+    producer_signature: signatureEnvelope,
+    producer_signature_file: producerSignaturePath,
+    producer_signature_file_sha256: sha256(readFileSync(producerSignaturePath)),
     consumer_session_id: piSession,
     project_fingerprint: projectFingerprint,
     receipt_id: receiptId,
@@ -361,6 +400,10 @@ try {
         projectFingerprint,
         snapshotSha256,
       },
+      signature_verified: true,
+      signature_key_id: signatureEnvelope.key_id,
+      signature_public_key_sha256: sha256(readFileSync(publicKeyPath)),
+      signature_preimage_sha256: signatureEnvelope.preimage_sha256,
       authority: AUTHORITY,
     },
     {
@@ -483,6 +526,9 @@ try {
     snapshot_sha256: snapshotSha256,
     project_fingerprint: projectFingerprint,
     fixture_raw_sha256: fixtureSha,
+    producer_signature_required: true,
+    fixture_signature_path: fixtureSignaturePath,
+    fixture_signature_sha256: sha256(readFileSync(fixtureSignaturePath)),
     consume_marker_sha256: sha256(readFileSync(markerPath)),
     ledger_checkpoint: {
       bytes: Buffer.byteLength(ledgerText),
@@ -508,7 +554,7 @@ try {
   const reportPath = join(acceptanceDir, responseId + ".json");
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
+  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead, publicKeyPath);
   if (valid.status !== 0) {
     throw new Error(
       "Expected synthetic HarnessRouter bundle to pass:\n" +
@@ -519,6 +565,33 @@ try {
   if (verified.verdict !== "pass") {
     throw new Error("HarnessRouter-mode verifier returned non-pass");
   }
+
+  const originalSignatureBytes = readFileSync(fixtureSignaturePath);
+  signatureEnvelope.signature_b64 =
+    "A" + signatureEnvelope.signature_b64.slice(1);
+  writeFileSync(
+    fixtureSignaturePath,
+    JSON.stringify(signatureEnvelope, null, 2) + "\n",
+    "utf8",
+  );
+  const signatureTamper = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+  );
+  if (signatureTamper.status === 0) {
+    throw new Error("Expected detached-signature tampering to fail");
+  }
+  const signatureRejected = JSON.parse(signatureTamper.stdout);
+  if (
+    signatureRejected.verdict !== "fail" ||
+    signatureRejected.assertions.detached_signature_cryptographically_valid !== false
+  ) {
+    throw new Error("Verifier did not identify detached signature tampering");
+  }
+  writeFileSync(fixtureSignaturePath, originalSignatureBytes);
 
   producerReport.harnessrouter_python.isolated = false;
   writeFileSync(
@@ -555,7 +628,7 @@ try {
     JSON.stringify(sourceSnapshot, null, 2) + "\n",
     "utf8",
   );
-  const tampered = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
+  const tampered = runVerifier(verifier, reportPath, localStudioHead, myJevHead, publicKeyPath);
   if (tampered.status === 0) {
     throw new Error("Expected source snapshot tampering to fail");
   }
