@@ -604,6 +604,7 @@ try {
     reportPath,
     localStudioHead,
     myJevHead,
+    publicKeyPath,
   );
   if (isolationTamper.status === 0) {
     throw new Error("Expected producer Python isolation tampering to fail");
