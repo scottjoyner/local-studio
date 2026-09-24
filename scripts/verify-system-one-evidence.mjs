@@ -431,6 +431,10 @@ const assertions = {
     provider?.response_id_present === true,
   provider_receipt_id_present:
     provider?.receipt_id_present === true,
+  provider_task_focus_present:
+    provider?.task_focus_present === true,
+  provider_task_focus_hash_matches:
+    provider?.task_focus_sha256 === canarySha,
   provider_model_matches_expected:
     provider?.provider_model_matches_expected === true,
   provider_tools_match_active:
