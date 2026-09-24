@@ -320,6 +320,7 @@ change model, tool, routing, approval, claim, or mutation state.
    - cwd fingerprint before/after and an equality assertion
    - provider-request count and passive tool-call count
    - whether the advisory `task_focus` value appeared in the agent messages
+   - SHA-256 of the rendered assistant text plus an exact `task_focus` equality assertion
    - the unchanged all-false authority assertion
 
 The smallest causal acceptance uses a unique canary only in
@@ -335,6 +336,8 @@ For that turn, the evidence package passes only when all of the following hold:
 - `provider_model_matches_expected == true`
 - `provider_tools_match_active == true`
 - `task_focus_observed_in_agent_messages == true`
+- `task_focus_echo_exact == true`
+- `assistant_text_sha256 == sha256(task_focus canary)`
 - `selected_model_unchanged == true`
 - `provider_route_unchanged == true`
 - `cwd_unchanged == true`
