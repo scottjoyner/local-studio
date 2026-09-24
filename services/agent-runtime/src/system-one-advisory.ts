@@ -410,15 +410,8 @@ function markConsumed(context: ConsumerContext, advisory: SystemOneAdvisory): bo
       { encoding: "utf8", flag: "wx" },
     );
     return true;
-  } catch (error) {
-    return !(
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "EEXIST"
-    )
-      ? false
-      : false;
+  } catch {
+    return false;
   }
 }
 
