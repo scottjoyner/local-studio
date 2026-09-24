@@ -23,6 +23,7 @@ The file is a stored Unified Harness Protocol response with a private metadata p
     "harness_id": "chrn-system-one",
     "hermes_system_one": {
       "profile": "hermes-system-one-heartbeat-v1",
+      "uhp_version": "2026-09-12",
       "receipt_id": "heartbeat-example",
       "observed_at": "2026-09-23T23:00:00Z",
       "expires_at": "2026-09-23T23:10:00Z",
@@ -43,7 +44,7 @@ The file is a stored Unified Harness Protocol response with a private metadata p
         "dispatch_allowed": false,
         "approval_granted": false,
         "claim_acquired": false,
-        "tool_invoked": false,
+        "mutation_allowed": false,
         "routing_authority_changed": false
       },
       "provenance": {
@@ -90,6 +91,7 @@ The advisory is ignored when any of these are true:
 - an opaque fleet handle is malformed or duplicated
 - any required authority field is not exactly `false`
 - any authority extension is `true`
+- an `incomplete` System-One response carries a refusal/escalation handoff; the handoff is recorded as ignored evidence and is not injected as completed advice
 - UHP metadata reports model fallback/substitution
 
 There is no fallback to `act`, another model, another receipt, a direct endpoint, or Agent Auto.
@@ -115,6 +117,7 @@ Every consumed receipt appends one line to:
 The line records:
 
 - Local Studio Pi session id
+- UHP protocol/profile version
 - UHP response id
 - UHP session id
 - configured harness id
