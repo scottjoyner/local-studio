@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import {
-  appendFileSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
-  writeFileSync,
+  writeSync,
 } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -516,14 +518,23 @@ function ledgerPath(): string {
   return path.join(resolveDataDir(), "system-one", "consumption.jsonl");
 }
 
-function appendLedger(entry: JsonRecord): boolean {
+function appendLedger(entry: JsonRecord, durable = false): boolean {
+  const filepath = ledgerPath();
+  let fd: number | null = null;
   try {
-    const filepath = ledgerPath();
-    mkdirSync(path.dirname(filepath), { recursive: true });
-    appendFileSync(filepath, `${JSON.stringify(entry)}\n`, "utf8");
+    mkdirSync(path.dirname(filepath), { recursive: true, mode: 0o700 });
+    fd = openSync(filepath, "a", 0o600);
+    writeSync(fd, `${JSON.stringify(entry)}\n`, undefined, "utf8");
+    if (durable) fsyncSync(fd);
     return true;
   } catch {
     return false;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
   }
 }
 
@@ -537,10 +548,12 @@ function markConsumed(
   advisory: SystemOneAdvisory,
 ): "marked" | "replay" | "conflict" | "error" {
   const filepath = consumeMarkerPath(context, advisory.receiptId);
+  let fd: number | null = null;
   try {
-    mkdirSync(path.dirname(filepath), { recursive: true });
-    writeFileSync(
-      filepath,
+    mkdirSync(path.dirname(filepath), { recursive: true, mode: 0o700 });
+    fd = openSync(filepath, "wx", 0o600);
+    writeSync(
+      fd,
       JSON.stringify({
         at: new Date().toISOString(),
         pi_session_id: context.piSessionId,
@@ -549,8 +562,12 @@ function markConsumed(
         response_sha256: advisory.responseSha256,
         receipt_sha256: advisory.receiptSha256,
       }),
-      { encoding: "utf8", flag: "wx" },
+      undefined,
+      "utf8",
     );
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
     return "marked";
   } catch (error) {
     if (
@@ -571,6 +588,12 @@ function markConsumed(
       }
     }
     return "error";
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
   }
 }
 
@@ -668,7 +691,7 @@ function consumeSystemOneAdvisoryPrompt(
     approval_recommended: advisory.approvalRecommended,
     fleet_handles: advisory.fleetPriority.map((item) => item.handle),
     authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
-  });
+  }, true);
   if (!ledgerWritten) return null;
   return {
     systemPrompt: `${systemPrompt.trimEnd()}\n\n${advisorySection(advisory)}`,
