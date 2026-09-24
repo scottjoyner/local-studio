@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveDataDir } from "./data-dir";
 
 const PROFILE = "hermes-system-one-heartbeat-v1";
+const DEFAULT_HARNESS_ID = "chrn_system_one";
 const UHP_VERSION = "2026-09-12";
 const CONTRACT_SHA256 = "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
 const MODES = new Set(["chat", "create_tasks", "act", "clarify", "cancel", "abstain"]);
@@ -116,6 +117,12 @@ function maxTtlSeconds(): number {
   const raw = Number(process.env.LOCAL_STUDIO_SYSTEM_ONE_MAX_TTL_SECONDS ?? DEFAULT_MAX_TTL_SECONDS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_MAX_TTL_SECONDS;
   return Math.min(Math.floor(raw), MAX_CONFIGURABLE_TTL_SECONDS);
+}
+
+function expectedSystemOneHarnessId(): string | null {
+  const value =
+    process.env.LOCAL_STUDIO_SYSTEM_ONE_HARNESS_ID?.trim() || DEFAULT_HARNESS_ID;
+  return /^chrn_[A-Za-z0-9._:-]{1,120}$/.test(value) ? value : null;
 }
 
 function sha256(value: string): string {
@@ -257,6 +264,11 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
   const harnessId = boundedString(metadata.harness_id, 200);
   if (!harnessId?.startsWith("chrn_"))
     return { outcome: "ignored", reason: "invalid_harness_id", responseSha256 };
+  const expectedHarnessId = expectedSystemOneHarnessId();
+  if (!expectedHarnessId)
+    return { outcome: "ignored", reason: "invalid_expected_harness_id", responseSha256 };
+  if (harnessId !== expectedHarnessId)
+    return { outcome: "ignored", reason: "harness_mismatch", responseSha256 };
 
   const profile = record(metadata.hermes_system_one);
   if (!profile) return { outcome: "ignored", reason: "missing_advisory_profile", responseSha256 };
