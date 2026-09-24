@@ -175,7 +175,10 @@ After installing that branch, render all consumer-boundary cases:
 
 ```bash
 my-jev-uhp-fixture-suite \
-  --output-dir /tmp/system-one-acceptance
+  --output-dir /tmp/system-one-acceptance \
+  --consumer-session-id '<active-pi-session-id>' \
+  --project-cwd /absolute/path/to/current/project \
+  --snapshot-sha256 '<64-char-snapshot-sha256>'
 ```
 
 It produces a SHA-pinned manifest plus five response files:
