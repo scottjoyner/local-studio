@@ -435,3 +435,18 @@ This operator harness is a consumer-boundary proof. It deliberately uses
 producer chain. That producer chain has its own deterministic compiler tests and
 must get a separate HarnessRouter scripted-provider acceptance before the two
 evidence packages are treated as one end-to-end proof.
+
+
+### Cross-language hash caveat
+
+The acceptance report intentionally does not compare my-jev's ad-hoc canonical
+profile SHA-256 to Local Studio's ad-hoc canonical profile SHA-256. Python and
+JavaScript can serialize semantically equal JSON numbers differently (for
+example `1.0` versus `1`).
+
+The deterministic HarnessRouter path instead compares the exact stored-response
+bytes copied from the producer with the raw response hash observed by the
+consumer. A future Ed25519 authenticity layer should sign a standards-based
+canonical representation such as RFC 8785/JCS, or use a detached signature over
+the exact stored bytes; it must not assume the existing language-local canonical
+hashes are interchangeable.
