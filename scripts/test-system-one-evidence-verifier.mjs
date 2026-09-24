@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -254,6 +255,23 @@ try {
   if (verified.verdict !== "pass") {
     throw new Error("Verifier returned non-pass verdict for valid bundle");
   }
+
+  const fixtureBytes = readFileSync(fixturePath);
+  const outsideFixture = join(root, "outside-fixture.json");
+  writeFileSync(outsideFixture, fixtureBytes);
+  rmSync(fixturePath);
+  symlinkSync(outsideFixture, fixturePath);
+  const symlinked = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+  );
+  if (symlinked.status === 0) {
+    throw new Error("Expected symlinked fixture evidence to fail");
+  }
+  rmSync(fixturePath);
+  writeFileSync(fixturePath, fixtureBytes);
 
   const wrongHead = runVerifier(
     verifier,
