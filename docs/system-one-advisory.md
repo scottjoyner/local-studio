@@ -403,6 +403,49 @@ so the deterministic chain can be audited as one evidence package:
 
 `heartbeat snapshot -> finite MCP -> HarnessRouter scripted System-One -> recommendation -> bound UHP response -> one Local Studio coding turn`.
 
+### Independent offline evidence verification
+
+Do not treat the acceptance process's own `verdict: pass` as the final proof.
+
+`scripts/verify-system-one-evidence.mjs` independently reopens the retained
+fixture, consumer report, replay rows, and (for `harnessrouter-script`) the
+producer recommendation, trace, producer report, and stored response. It
+recomputes raw file hashes and cross-checks the critical identifiers and
+authority invariants without trusting the original report's `assertions`
+object.
+
+Run it against a retained bundle:
+
+```bash
+node scripts/verify-system-one-evidence.mjs \
+  --report /tmp/local-studio-uhp-acceptance/system-one/acceptance/<response-id>.json \
+  --expected-local-head '<exact Local Studio SHA>' \
+  --expected-my-jev-head '<exact my-jev SHA>' \
+  --output /tmp/local-studio-uhp-acceptance/system-one/acceptance/<response-id>.verified.json
+```
+
+The verifier derives the bound fixture and producer bundle from the
+`system-one` directory instead of trusting capture-time absolute paths, so a
+retained directory can be moved or restored before verification.
+
+It independently requires, among other checks:
+
+- exact contract, receipt, session, project, and snapshot binding
+- raw fixture hash equality with the consumed ledger row
+- exactly one consumed/boundary/provider/completion evidence row
+- provider marker/response/receipt presence and a provider-request hash
+- read-only tool set, one provider request, and zero tool calls
+- exact latest-assistant canary hash/equality
+- unchanged model, route, cwd, and Pi session
+- exactly one `replay_already_consumed` row and no replay influence rows
+- for HarnessRouter mode, raw recommendation/trace/stored-response hashes,
+  pinned HarnessRouter head, one terminal `recommend` step, config v1,
+  all-false authority, trace binding, and `script/s1` with no fallback
+
+CI runs a dependency-free synthetic self-test that first verifies a valid
+retained bundle and then tampers the assistant-output hash and requires the
+offline verifier to fail.
+
 The harness deliberately uses three phases:
 
 1. a bootstrap prompt with no advisory present, solely to establish the canonical
