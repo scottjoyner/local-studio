@@ -45,12 +45,12 @@ jobs:
       - name: Experimental validation script syntax
         run: |
           node --check scripts/capture-local-ai-evidence.mjs
-          node --check scripts/export-opencode-session-evidence.mjs
-          node --check scripts/export-opencode-session-evidence.test.mjs
           bash -n scripts/prepare-bonsai2-rocm.sh
           bash -n scripts/validate-bonsai2-r9700.sh
-      - name: OpenCode session evidence contract
-        run: node scripts/export-opencode-session-evidence.test.mjs
+          node --check scripts/render-r9700-bonsai-registry-candidate.mjs
+          node --check scripts/render-r9700-bonsai-registry-candidate.test.mjs
+      - name: Registry handoff contract
+        run: node scripts/render-r9700-bonsai-registry-candidate.test.mjs
 
   controller:
     if: github.event_name != 'schedule'
