@@ -20,16 +20,19 @@ The file is a stored Unified Harness Protocol response with a private metadata p
   "output": [],
   "metadata": {
     "session_id": "hsess-example",
-    "harness_id": "chrn-system-one",
+    "harness_id": "chrn_system_one",
     "hermes_system_one": {
       "profile": "hermes-system-one-heartbeat-v1",
       "uhp_version": "2026-09-12",
+      "contract_sha256": "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
       "receipt_id": "heartbeat-example",
       "observed_at": "2026-09-23T23:00:00Z",
       "expires_at": "2026-09-23T23:10:00Z",
       "advice": {
         "mode": "act",
         "mode_confidence": 0.91,
+        "policy_disposition": "propose_action",
+        "approval_recommended": true,
         "task_focus": "Continue the bounded implementation already in progress.",
         "context_priority": ["current-pr", "latest-handoff"],
         "fleet_priority": [
@@ -53,7 +56,8 @@ The file is a stored Unified Harness Protocol response with a private metadata p
         "knowledge_revision": "exact-knowledge-revision",
         "neo4j_snapshot_id": "snapshot-id",
         "fleet_projection_generation": "generation",
-        "fleet_projection_checksum": "checksum"
+        "fleet_projection_checksum": "checksum",
+        "trace_sha256": "<64 lowercase hex or null>"
       }
     }
   }
@@ -90,7 +94,7 @@ The advisory is ignored when any of these are true:
 - context or fleet ranking exceeds its bound
 - an opaque fleet handle is malformed or duplicated
 - any required authority field is not exactly `false`
-- any authority extension is `true`
+- the profile, binding, advice, authority, fleet item, or provenance objects contain fields outside the pinned schema
 - an `incomplete` System-One response carries a refusal/escalation handoff; the handoff is recorded as ignored evidence and is not injected as completed advice
 - UHP metadata reports model fallback/substitution
 
@@ -181,7 +185,7 @@ my-jev-uhp-fixture-suite \
   --snapshot-sha256 '<64-char-snapshot-sha256>'
 ```
 
-It produces a SHA-pinned manifest plus five response files:
+It produces a SHA-pinned manifest plus eight response files:
 
 | file | expected Local Studio result |
 | --- | --- |
@@ -189,6 +193,9 @@ It produces a SHA-pinned manifest plus five response files:
 | `expired.json` | ignored: `expired` |
 | `authority-bearing.json` | ignored: `authority_mutation_allowed` |
 | `model-fallback.json` | ignored: `model_fallback` |
+| `wrong-session.json` | ignored: `binding_session_mismatch` |
+| `wrong-project.json` | ignored: `binding_project_mismatch` |
+| `wrong-contract.json` | ignored: `contract_mismatch` |
 | `handoff.json` | ignored: `system_one_handoff` |
 
 For each case:
@@ -238,8 +245,15 @@ Before injection Local Studio verifies:
 
 - `consumer == local-studio`
 - the consumer session id equals the canonical active Pi session
-- the project fingerprint equals the current resolved workspace
+- the project fingerprint equals the current canonical realpath workspace
+- the configured UHP harness id equals `LOCAL_STUDIO_SYSTEM_ONE_HARNESS_ID` (default `chrn_system_one`)
 - both binding hashes are valid lowercase SHA-256 values
+
+`work_id` and `snapshot_sha256` are source-lineage fields at the Local Studio boundary. Local
+Studio validates their shape and records them, but it does not have the producer's source work graph
+or heartbeat snapshot available to independently recompute them. The my-jev compiler is responsible
+for matching `snapshot_sha256` to the exact source snapshot. Until producer signatures are added,
+these two lineage fields are not independent consumer-side authenticity proofs.
 
 This means a fresh valid response generated for another Pi session or workspace
 is still rejected.
@@ -249,12 +263,18 @@ under:
 
 `<LOCAL_STUDIO_DATA_DIR>/system-one/consumed/`
 
-before prompt injection. The same response cannot be injected twice into the
-same Pi session, including after process restart. Re-presentation is logged as:
+before prompt injection. Replay identity is keyed by receipt id within the target
+Pi session rather than raw JSON bytes, so reformatting or re-wrapping a receipt
+does not reset single-use state. Re-presentation is logged as:
 
 `replay_already_consumed`
 
-A marker-write failure also fails closed and injects nothing.
+If the same receipt id reappears with different response/profile content it is rejected as
+`receipt_id_conflict`. A marker-write failure also fails closed and injects nothing.
+
+A successful advisory is injected only after both the atomic single-use marker and the detailed
+JSONL consumption record are durably written. If the detailed ledger cannot persist, the receipt is
+burned and the turn receives no advisory.
 
 The consumption ledger now preserves the binding, contract hash, response hash,
 profile hash, served model, richer policy disposition, and advisory approval
@@ -363,3 +383,13 @@ and contains the exact Local Studio and my-jev Git heads, source snapshot hash,
 raw fixture hash, producer canonical hashes, before/after runtime status,
 assertion results, and the append-only ledger rows for that response. A failed
 assertion returns a non-zero exit status.
+
+
+### Scope of the operator proof
+
+This operator harness is a consumer-boundary proof. It deliberately uses
+`my_jev.uhp_fixture`; it does **not** prove the full
+`heartbeat snapshot -> System-One recommendation -> recommendation compiler`
+producer chain. That producer chain has its own deterministic compiler tests and
+must get a separate HarnessRouter scripted-provider acceptance before the two
+evidence packages are treated as one end-to-end proof.
