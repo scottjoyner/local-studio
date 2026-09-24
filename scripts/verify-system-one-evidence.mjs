@@ -176,11 +176,15 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   );
   const tracePath = join(producerDir, "workspace", "trace.json");
   const storedResponsePath = join(producerDir, "stored-uhp-response.json");
+  const sourceSnapshotPath = join(producerDir, "source-heartbeat-snapshot.json");
+  const configPath = join(producerDir, "package", "config.yaml");
   const paths = [
     producerReportPath,
     recommendationPath,
     tracePath,
     storedResponsePath,
+    sourceSnapshotPath,
+    configPath,
   ];
   if (!paths.every((path) => existsSync(path))) {
     return {
@@ -193,6 +197,7 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   const recommendation = readJson(recommendationPath);
   const trace = readJson(tracePath);
   const stored = readJson(storedResponsePath);
+  const sourceSnapshot = readJson(sourceSnapshotPath);
   const profile = stored?.metadata?.hermes_system_one;
   const recommendSteps = Array.isArray(trace?.steps)
     ? trace.steps.filter((step) => step?.action === "recommend")
@@ -220,12 +225,24 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       producer_snapshot_matches:
         producer.snapshot_sha256 === report.snapshot_sha256 &&
         recommendation.snapshot_sha256 === report.snapshot_sha256,
+      producer_source_snapshot_raw_hash_matches:
+        producer.source_snapshot_evidence_raw_sha256 ===
+        sha256File(sourceSnapshotPath),
+      producer_source_snapshot_canonical_hash_matches:
+        canonicalSha256(sourceSnapshot) === report.snapshot_sha256,
+      producer_config_file_hash_matches:
+        sha256File(configPath) === SYSTEMONE_CONFIG_SHA256 &&
+        producer.systemone_config_sha256 === SYSTEMONE_CONFIG_SHA256,
       producer_recommendation_hash_matches:
         producer.recommendation_sha256 === sha256File(recommendationPath),
       producer_trace_hash_matches:
         producer.trace_sha256 === sha256File(tracePath),
       producer_stored_response_hash_matches:
         producer.stored_response_raw_sha256 === sha256File(storedResponsePath),
+      producer_profile_canonical_hash_matches:
+        producer.profile_sha256 === canonicalSha256(profile),
+      producer_response_canonical_hash_matches:
+        producer.response_sha256 === canonicalSha256(stored),
       producer_stored_response_matches_fixture:
         sha256File(storedResponsePath) === fixtureSha,
       producer_script_model:
@@ -268,6 +285,9 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       recommendation_sha256: sha256File(recommendationPath),
       trace_sha256: sha256File(tracePath),
       stored_response_sha256: sha256File(storedResponsePath),
+      source_snapshot_raw_sha256: sha256File(sourceSnapshotPath),
+      source_snapshot_canonical_sha256: canonicalSha256(sourceSnapshot),
+      systemone_config_sha256: sha256File(configPath),
     },
   };
 }
