@@ -42,6 +42,29 @@ function gitHead(cwd) {
   return result.stdout.trim() || null;
 }
 
+function requireCleanGitCheckout(cwd, label) {
+  const head = gitHead(cwd);
+  if (!head || !/^[0-9a-f]{40}$/.test(head)) {
+    throw new Error(`${label} checkout has no exact Git HEAD`);
+  }
+  const status = spawnSync(
+    "git",
+    ["status", "--porcelain=v1", "--untracked-files=all"],
+    { cwd, encoding: "utf8" },
+  );
+  if (status.status !== 0) {
+    throw new Error(
+      `${label} git status failed: ${status.stderr || status.stdout}`,
+    );
+  }
+  if (status.stdout.trim()) {
+    throw new Error(
+      `${label} checkout must be clean for exact-head evidence:\n${status.stdout}`,
+    );
+  }
+  return head;
+}
+
 function readLedger(filepath) {
   if (!existsSync(filepath)) return [];
   return readFileSync(filepath, "utf8")
@@ -178,6 +201,11 @@ const harnessrouterRepo = args.get("harnessrouter-repo")
   ? realpathSync(args.get("harnessrouter-repo"))
   : null;
 const harnessrouterPython = args.get("harnessrouter-python") ?? python;
+const localStudioHeadBefore = requireCleanGitCheckout(
+  localStudioRoot,
+  "Local Studio",
+);
+const myJevHeadBefore = requireCleanGitCheckout(myJevRepo, "my-jev");
 
 if (!["fixture", "harnessrouter-script"].includes(producerMode)) {
   throw new Error("--producer must be fixture or harnessrouter-script");
@@ -554,13 +582,29 @@ if (ledgerRaw.length === 0) {
   throw new Error("System-One consumption ledger is empty after acceptance");
 }
 
+const localStudioHeadAfter = requireCleanGitCheckout(
+  localStudioRoot,
+  "Local Studio",
+);
+const myJevHeadAfter = requireCleanGitCheckout(myJevRepo, "my-jev");
+if (
+  localStudioHeadAfter !== localStudioHeadBefore ||
+  myJevHeadAfter !== myJevHeadBefore
+) {
+  throw new Error(
+    "Source checkout HEAD changed during the System-One acceptance transaction",
+  );
+}
+
 const verdict = Object.values(assertions).every(Boolean) ? "pass" : "fail";
 const report = {
   schema: "local-studio-system-one-one-turn-acceptance-v2",
   verdict,
   generated_at: new Date().toISOString(),
-  local_studio_head: gitHead(localStudioRoot),
-  my_jev_head: gitHead(myJevRepo),
+  local_studio_head: localStudioHeadBefore,
+  my_jev_head: myJevHeadBefore,
+  source_checkouts_clean: true,
+  source_heads_stable: true,
   producer_mode: producerMode,
   base_url: baseUrl.toString(),
   runtime_session_id: runtimeSessionId,
