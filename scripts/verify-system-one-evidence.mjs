@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  verify as verifySignature,
+} from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -29,6 +33,8 @@ const SYSTEMONE_PACKAGE_MANIFEST_SHA256 =
   "3a69281583ccccefd3e4d5422939703c842b00b92e2bfa9fc374293a94e15a74";
 const SYSTEMONE_CONFIG_SHA256 =
   "459cc500b481878aa1445a6176bb8a6b61db51981696afcc6dd65f9fe3700f4e";
+const SIGNATURE_SCHEMA = "hermes-system-one-detached-signature-v1";
+const SIGNATURE_DOMAIN = "hermes-system-one-uhp-response-bytes-ed25519-v1";
 const AUTHORITY_KEYS = [
   "dispatch_allowed",
   "approval_granted",
@@ -179,6 +185,114 @@ function requireBundleFile(systemOneDir, path, label) {
     throw new Error(label + " escapes the retained system-one bundle: " + path);
   }
   return path;
+}
+
+function readVerificationKey(path) {
+  if (!path) return null;
+  requireFile(path, "Producer public key");
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 16 * 1024) {
+    throw new Error("Producer public key must be a bounded regular non-symlink file");
+  }
+  const raw = readFileSync(path);
+  const key = createPublicKey(raw);
+  if (key.asymmetricKeyType !== "ed25519") {
+    throw new Error("Producer public key must be Ed25519");
+  }
+  const der = key.export({ type: "spki", format: "der" });
+  return {
+    key,
+    keyId: "ed25519:" + sha256(der),
+    rawSha256: sha256(raw),
+  };
+}
+
+function verifyDetachedResponseSignature(responsePath, signaturePath, verificationKey) {
+  if (!verificationKey || !existsSync(signaturePath)) {
+    return {
+      valid: false,
+      reason: !verificationKey ? "public_key_missing" : "signature_file_missing",
+    };
+  }
+
+  let envelope;
+  try {
+    envelope = readJson(signaturePath);
+  } catch {
+    return { valid: false, reason: "signature_invalid_json" };
+  }
+  const expectedKeys = [
+    "schema",
+    "scheme",
+    "domain",
+    "key_id",
+    "response_sha256",
+    "preimage_sha256",
+    "signature_b64",
+  ].sort();
+  if (
+    envelope === null ||
+    typeof envelope !== "object" ||
+    Array.isArray(envelope) ||
+    !sameStrings(Object.keys(envelope), expectedKeys)
+  ) {
+    return { valid: false, reason: "signature_shape_mismatch" };
+  }
+  if (envelope.schema !== SIGNATURE_SCHEMA) {
+    return { valid: false, reason: "signature_schema_mismatch" };
+  }
+  if (envelope.scheme !== "ed25519") {
+    return { valid: false, reason: "signature_scheme_mismatch" };
+  }
+  if (envelope.domain !== SIGNATURE_DOMAIN) {
+    return { valid: false, reason: "signature_domain_mismatch" };
+  }
+  if (envelope.key_id !== verificationKey.keyId) {
+    return { valid: false, reason: "signature_key_id_mismatch" };
+  }
+
+  const responseBytes = readFileSync(responsePath);
+  const responseSha256 = sha256(responseBytes);
+  if (envelope.response_sha256 !== responseSha256) {
+    return { valid: false, reason: "signature_response_hash_mismatch" };
+  }
+  const preimage = Buffer.concat([
+    Buffer.from(SIGNATURE_DOMAIN + "\0", "utf8"),
+    responseBytes,
+  ]);
+  const preimageSha256 = sha256(preimage);
+  if (envelope.preimage_sha256 !== preimageSha256) {
+    return { valid: false, reason: "signature_preimage_hash_mismatch" };
+  }
+
+  const encoded =
+    typeof envelope.signature_b64 === "string" ? envelope.signature_b64 : "";
+  if (
+    encoded.length === 0 ||
+    encoded.length > 128 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    return { valid: false, reason: "signature_encoding_invalid" };
+  }
+  const signature = Buffer.from(encoded, "base64");
+  if (
+    signature.length !== 64 ||
+    signature.toString("base64") !== encoded ||
+    !verifySignature(null, preimage, verificationKey.key, signature)
+  ) {
+    return { valid: false, reason: "signature_invalid" };
+  }
+
+  return {
+    valid: true,
+    reason: null,
+    envelope,
+    responseSha256,
+    preimageSha256,
+    keyId: verificationKey.keyId,
+    publicKeySha256: verificationKey.rawSha256,
+    signatureFileSha256: sha256File(signaturePath),
+  };
 }
 
 function consumeMarkerPath(systemOneDir, piSessionId, receiptId) {
@@ -447,6 +561,32 @@ const ledgerCheckpointPrefix =
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = required(args, "expected-local-head");
 const expectedMyJevHead = required(args, "expected-my-jev-head");
+const publicKeyPath = args.get("producer-public-key")
+  ? resolve(args.get("producer-public-key"))
+  : null;
+const verificationKey = readVerificationKey(publicKeyPath);
+const fixtureSignaturePath = join(
+  systemOneDir,
+  "sessions",
+  report.pi_session_id + ".json.sig.json",
+);
+const signatureEvidencePresent =
+  existsSync(fixtureSignaturePath) ||
+  report.producer_signature_required === true ||
+  consumed?.signature_verified === true ||
+  report?.producer_evidence?.producer_signature != null ||
+  verificationKey !== null;
+let signatureVerification = null;
+if (signatureEvidencePresent) {
+  if (existsSync(fixtureSignaturePath)) {
+    requireBundleFile(systemOneDir, fixtureSignaturePath, "Bound UHP detached signature");
+  }
+  signatureVerification = verifyDetachedResponseSignature(
+    fixturePath,
+    fixtureSignaturePath,
+    verificationKey,
+  );
+}
 const runtimeProvenance = report?.runtime_provenance;
 const runtimeProvenanceFiles =
   runtimeProvenance?.files && typeof runtimeProvenance.files === "object"
@@ -493,6 +633,43 @@ const assertions = {
   project_fingerprint_is_sha256: isSha256(report.project_fingerprint),
   fixture_raw_hash_matches_report:
     fixtureSha === report.fixture_raw_sha256,
+  signature_policy_not_downgraded:
+    !signatureEvidencePresent ||
+    report.producer_signature_required === true,
+  signature_public_key_supplied_when_required:
+    !signatureEvidencePresent || verificationKey !== null,
+  detached_signature_file_present_when_required:
+    !signatureEvidencePresent || existsSync(fixtureSignaturePath),
+  detached_signature_cryptographically_valid:
+    !signatureEvidencePresent || signatureVerification?.valid === true,
+  detached_signature_response_hash_matches:
+    !signatureEvidencePresent ||
+    signatureVerification?.responseSha256 === fixtureSha,
+  detached_signature_file_hash_matches_report:
+    !signatureEvidencePresent ||
+    (
+      isSha256(report.fixture_signature_sha256) &&
+      signatureVerification?.signatureFileSha256 === report.fixture_signature_sha256
+    ),
+  detached_signature_ledger_attestation_matches:
+    !signatureEvidencePresent ||
+    (
+      consumed?.signature_verified === true &&
+      consumed?.signature_key_id === signatureVerification?.keyId &&
+      consumed?.signature_public_key_sha256 === signatureVerification?.publicKeySha256 &&
+      consumed?.signature_preimage_sha256 === signatureVerification?.preimageSha256
+    ),
+  detached_signature_producer_evidence_matches:
+    !signatureEvidencePresent ||
+    report.producer_mode !== "harnessrouter-script" ||
+    (
+      report?.producer_evidence?.producer_signature?.key_id === signatureVerification?.keyId &&
+      report?.producer_evidence?.producer_signature?.response_sha256 === fixtureSha &&
+      report?.producer_evidence?.producer_signature?.preimage_sha256 ===
+        signatureVerification?.preimageSha256 &&
+      report?.producer_evidence?.producer_signature_file_sha256 ===
+        report.fixture_signature_sha256
+    ),
   producer_mode_matches_fixture_model:
     (report.producer_mode === "fixture" && fixture?.model === "recorded/jev") ||
     (report.producer_mode === "harnessrouter-script" && fixture?.model === "script/s1"),
@@ -670,6 +847,11 @@ const result = {
   system_one_dir: systemOneDir,
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureSha,
+  fixture_signature_path: signatureEvidencePresent ? fixtureSignaturePath : null,
+  fixture_signature_sha256:
+    signatureVerification?.signatureFileSha256 ?? null,
+  producer_public_key_sha256: verificationKey?.rawSha256 ?? null,
+  signature_verification: signatureVerification,
   consume_marker_path: markerPath,
   consume_marker_sha256: sha256(markerRaw),
   ledger_path: ledgerPath,
