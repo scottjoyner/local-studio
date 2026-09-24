@@ -375,8 +375,11 @@ const ledgerCheckpointPrefix =
     ? ledgerRaw.subarray(0, checkpointBytes)
     : null;
 const canarySha = sha256(report.task_focus_canary ?? "");
-const expectedLocalHead = args.get("expected-local-head") ?? null;
-const expectedMyJevHead = args.get("expected-my-jev-head") ?? null;
+const expectedLocalHead = required(args, "expected-local-head");
+const expectedMyJevHead = required(args, "expected-my-jev-head");
+if (!isGitSha(expectedLocalHead) || !isGitSha(expectedMyJevHead)) {
+  throw new Error("Expected Local Studio and my-jev heads must be exact 40-hex Git SHAs");
+}
 
 const assertions = {
   report_schema:
@@ -384,9 +387,9 @@ const assertions = {
   report_heads_are_git_shas:
     isGitSha(report.local_studio_head) && isGitSha(report.my_jev_head),
   expected_local_head_matches:
-    expectedLocalHead === null || report.local_studio_head === expectedLocalHead,
+    report.local_studio_head === expectedLocalHead,
   expected_my_jev_head_matches:
-    expectedMyJevHead === null || report.my_jev_head === expectedMyJevHead,
+    report.my_jev_head === expectedMyJevHead,
   snapshot_is_sha256: isSha256(report.snapshot_sha256),
   project_fingerprint_is_sha256: isSha256(report.project_fingerprint),
   fixture_raw_hash_matches_report:
