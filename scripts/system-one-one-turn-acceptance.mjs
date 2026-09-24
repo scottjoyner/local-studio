@@ -1,0 +1,424 @@
+#!/usr/bin/env node
+
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+function parseArgs(argv) {
+  const values = new Map();
+  for (let index = 0; index < argv.length; index += 1) {
+    const key = argv[index];
+    if (!key.startsWith("--")) throw new Error(`Unexpected argument: ${key}`);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${key}`);
+    values.set(key.slice(2), value);
+    index += 1;
+  }
+  return values;
+}
+
+function required(args, name) {
+  const value = args.get(name)?.trim();
+  if (!value) throw new Error(`--${name} is required`);
+  return value;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function gitHead(cwd) {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" });
+  if (result.status !== 0) return null;
+  return result.stdout.trim() || null;
+}
+
+function readLedger(filepath) {
+  if (!existsSync(filepath)) return [];
+  return readFileSync(filepath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function canonicalProjectFingerprint(cwd) {
+  const canonical = realpathSync(cwd).replaceAll("\\", "/").replace(/\/+$/, "") || "/";
+  return sha256(canonical);
+}
+
+function allAuthorityFalse(value) {
+  if (!value || typeof value !== "object") return false;
+  const keys = [
+    "dispatch_allowed",
+    "approval_granted",
+    "claim_acquired",
+    "mutation_allowed",
+    "routing_authority_changed",
+  ];
+  return keys.every((key) => value[key] === false);
+}
+
+function sameStrings(left, right) {
+  const a = [...new Set(left ?? [])].sort();
+  const b = [...new Set(right ?? [])].sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let body;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 500)}`);
+  }
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
+async function runtimeStatus(baseUrl, sessionId) {
+  const url = new URL("/api/agent/runtime/status", baseUrl);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("after", "0");
+  return requestJson(url);
+}
+
+async function sendTurn(baseUrl, body) {
+  return requestJson(new URL("/api/agent/turn", baseUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function sleep(ms) {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+async function waitForIdle(baseUrl, sessionId, minEventSeq, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await runtimeStatus(baseUrl, sessionId);
+    const status = latest?.status;
+    if (
+      status &&
+      status.active === false &&
+      Number(status.eventSeq ?? 0) > Number(minEventSeq ?? -1)
+    ) {
+      return latest;
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for runtime session '${sessionId}' to settle; last status=${JSON.stringify(latest?.status ?? null)}`,
+  );
+}
+
+function parseProducerEvidence(stderr) {
+  const candidates = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{") && line.endsWith("}"));
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    try {
+      return JSON.parse(candidates[index]);
+    } catch {}
+  }
+  return null;
+}
+
+function snapshotStatus(status) {
+  if (!status) return null;
+  return {
+    active: status.active,
+    running: status.running,
+    modelId: status.modelId,
+    cwd: status.cwd,
+    piSessionId: status.piSessionId,
+    eventSeq: status.eventSeq,
+    lastError: status.lastError,
+  };
+}
+
+const args = parseArgs(process.argv.slice(2));
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const localStudioRoot = resolve(scriptDir, "..");
+const baseUrl = new URL(args.get("base-url") ?? "http://127.0.0.1:8081");
+const runtimeSessionId =
+  args.get("runtime-session-id") ?? `uhp-one-turn-${process.pid}-${Date.now()}`;
+const modelId = required(args, "model");
+const projectCwd = realpathSync(required(args, "cwd"));
+const dataDir = resolve(required(args, "data-dir"));
+const myJevRepo = realpathSync(required(args, "my-jev-repo"));
+const snapshotSha256 = required(args, "snapshot-sha256");
+const python = args.get("python") ?? "python3";
+const workId = args.get("work-id") ?? "acceptance-local-studio-pr3";
+const timeoutMs = Number(args.get("timeout-ms") ?? 180000);
+
+if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
+  throw new Error("--snapshot-sha256 must be exactly 64 lowercase hex characters");
+}
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  throw new Error("--timeout-ms must be a positive number");
+}
+
+const systemOneDir = join(dataDir, "system-one");
+const ledgerPath = join(systemOneDir, "consumption.jsonl");
+const latestPath = join(systemOneDir, "latest.json");
+mkdirSync(join(systemOneDir, "sessions"), { recursive: true });
+mkdirSync(join(systemOneDir, "acceptance"), { recursive: true });
+
+if (existsSync(latestPath)) {
+  throw new Error(
+    `Refusing acceptance with ${latestPath} present; use an isolated LOCAL_STUDIO_DATA_DIR so the bootstrap turn cannot consume unrelated advice.`,
+  );
+}
+
+const beforeBootstrapLedger = readLedger(ledgerPath);
+let initial = await runtimeStatus(baseUrl, runtimeSessionId);
+let piSessionId = initial?.status?.piSessionId ?? null;
+
+if (!piSessionId) {
+  const bootstrap = await sendTurn(baseUrl, {
+    mode: "prompt",
+    sessionId: runtimeSessionId,
+    modelId,
+    cwd: projectCwd,
+    piSessionId: null,
+    toolAccess: "read_only",
+    message: "Reply exactly BOOTSTRAP_READY. Do not use tools.",
+  });
+  const bootstrapSeq = Number(bootstrap?.status?.eventSeq ?? initial?.status?.eventSeq ?? -1);
+  initial = await waitForIdle(baseUrl, runtimeSessionId, bootstrapSeq - 1, timeoutMs);
+  piSessionId = initial?.status?.piSessionId ?? bootstrap?.piSessionId ?? null;
+}
+
+if (!piSessionId) {
+  throw new Error("Runtime did not expose a canonical Pi session id after bootstrap");
+}
+if (initial.status?.active) {
+  throw new Error("Acceptance requires an idle runtime session");
+}
+if (initial.status?.modelId !== modelId) {
+  throw new Error(
+    `Bootstrap model drift: expected '${modelId}', got '${initial.status?.modelId ?? "null"}'`,
+  );
+}
+if (realpathSync(initial.status.cwd) !== projectCwd) {
+  throw new Error(
+    `Bootstrap cwd drift: expected '${projectCwd}', got '${initial.status?.cwd ?? "null"}'`,
+  );
+}
+
+const bootstrapLedger = readLedger(ledgerPath).slice(beforeBootstrapLedger.length);
+if (bootstrapLedger.length > 0) {
+  throw new Error(
+    `Bootstrap unexpectedly produced System-One ledger entries; acceptance data dir is not isolated: ${JSON.stringify(bootstrapLedger)}`,
+  );
+}
+
+const nonce = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 17);
+const responseId = `resp_one_turn_${nonce}_${process.pid}`;
+const receiptId = `one-turn-${nonce}-${process.pid}`;
+const uhpSessionId = `hsess-one-turn-${nonce}`;
+const canary = `UHP_ONE_TURN_${nonce}_${process.pid}`;
+const fixturePath = join(systemOneDir, "sessions", `${piSessionId}.json`);
+
+if (existsSync(fixturePath)) {
+  throw new Error(
+    `Refusing to overwrite existing session advisory fixture: ${fixturePath}. Use a fresh runtime session/data directory.`,
+  );
+}
+
+const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const producerArgs = [
+  "-m",
+  "my_jev.uhp_fixture",
+  "--decision",
+  "examples/uhp/decision.json",
+  "--fleet-resolution",
+  "examples/uhp/fleet-resolution.json",
+  "--fleet-handle-map",
+  "examples/uhp/fleet-handles.json",
+  "--provenance",
+  "examples/uhp/provenance.json",
+  "--receipt-id",
+  receiptId,
+  "--response-id",
+  responseId,
+  "--session-id",
+  uhpSessionId,
+  "--harness-id",
+  "chrn_system_one",
+  "--model",
+  "recorded/jev",
+  "--work-id",
+  workId,
+  "--consumer-session-id",
+  piSessionId,
+  "--project-cwd",
+  projectCwd,
+  "--snapshot-sha256",
+  snapshotSha256,
+  "--observed-at",
+  now,
+  "--created-at",
+  now,
+  "--ttl-seconds",
+  "600",
+  "--task-focus",
+  canary,
+  "--context-priority",
+  "current-pr",
+  "--context-priority",
+  "latest-handoff",
+  "--output",
+  fixturePath,
+];
+
+const producer = spawnSync(python, producerArgs, {
+  cwd: myJevRepo,
+  encoding: "utf8",
+  env: {
+    ...process.env,
+    PYTHONPATH: [
+      join(myJevRepo, "src"),
+      process.env.PYTHONPATH ?? "",
+    ]
+      .filter(Boolean)
+      .join(process.platform === "win32" ? ";" : ":"),
+  },
+});
+if (producer.status !== 0) {
+  throw new Error(
+    `my-jev fixture generation failed (exit ${producer.status}):\n${producer.stderr || producer.stdout}`,
+  );
+}
+
+const producerEvidence = parseProducerEvidence(producer.stderr);
+const fixtureRaw = readFileSync(fixturePath, "utf8");
+const fixtureRawSha256 = sha256(fixtureRaw);
+const ledgerStart = readLedger(ledgerPath).length;
+const before = await runtimeStatus(baseUrl, runtimeSessionId);
+const beforeStatus = before.status;
+if (!beforeStatus || beforeStatus.active) {
+  throw new Error("Acceptance turn requires an idle initialized runtime");
+}
+
+const command = await sendTurn(baseUrl, {
+  mode: "prompt",
+  sessionId: runtimeSessionId,
+  modelId,
+  cwd: projectCwd,
+  piSessionId,
+  toolAccess: "read_only",
+  message:
+    "Do not use any tools. Reply with exactly the task_focus value from the Local Studio System-One advisory and nothing else.",
+});
+
+const after = await waitForIdle(
+  baseUrl,
+  runtimeSessionId,
+  Number(beforeStatus.eventSeq ?? -1),
+  timeoutMs,
+);
+const afterStatus = after.status;
+const evidenceRows = readLedger(ledgerPath)
+  .slice(ledgerStart)
+  .filter((row) => row.response_id === responseId);
+
+const byOutcome = new Map();
+for (const row of evidenceRows) {
+  const bucket = byOutcome.get(row.outcome) ?? [];
+  bucket.push(row);
+  byOutcome.set(row.outcome, bucket);
+}
+
+const consumed = byOutcome.get("consumed")?.at(-1) ?? null;
+const boundary = byOutcome.get("turn_boundary_captured")?.at(-1) ?? null;
+const providerRows = byOutcome.get("provider_request_observed") ?? [];
+const provider = providerRows.at(-1) ?? null;
+const completed = byOutcome.get("turn_completed")?.at(-1) ?? null;
+const expectedTools = ["find", "grep", "ls", "read"];
+const expectedCwdFingerprint = canonicalProjectFingerprint(projectCwd);
+
+const assertions = {
+  fixture_response_id: consumed?.response_id === responseId,
+  fixture_receipt_id: consumed?.receipt_id === receiptId,
+  raw_fixture_hash_matches_ledger: consumed?.response_sha256 === fixtureRawSha256,
+  consumed_authority_all_false: allAuthorityFalse(consumed?.authority),
+  boundary_model_unchanged_from_requested: boundary?.selected_model_id === modelId,
+  boundary_cwd_matches_project:
+    boundary?.cwd_fingerprint === expectedCwdFingerprint,
+  boundary_tools_are_read_only:
+    sameStrings(boundary?.active_tools, expectedTools),
+  provider_request_count_is_one: completed?.provider_request_count === 1,
+  provider_marker_present: provider?.advisory_marker_present === true,
+  provider_response_id_present: provider?.response_id_present === true,
+  provider_receipt_id_present: provider?.receipt_id_present === true,
+  provider_model_matches_expected: provider?.provider_model_matches_expected === true,
+  provider_tools_match_active: provider?.provider_tools_match_active === true,
+  no_tool_calls: completed?.tool_call_count === 0,
+  task_focus_reached_agent_messages:
+    completed?.task_focus_observed_in_agent_messages === true,
+  selected_model_unchanged: completed?.selected_model_unchanged === true,
+  provider_route_unchanged: completed?.provider_route_unchanged === true,
+  cwd_unchanged: completed?.cwd_unchanged === true,
+  completion_authority_all_false: allAuthorityFalse(completed?.authority),
+  runtime_model_unchanged:
+    beforeStatus.modelId === modelId && afterStatus?.modelId === modelId,
+  runtime_cwd_unchanged:
+    realpathSync(beforeStatus.cwd) === projectCwd &&
+    realpathSync(afterStatus.cwd) === projectCwd,
+  runtime_pi_session_unchanged:
+    beforeStatus.piSessionId === piSessionId &&
+    afterStatus.piSessionId === piSessionId,
+  producer_model_is_not_coding_model:
+    consumed?.served_model === "recorded/jev" && consumed?.served_model !== modelId,
+};
+
+const verdict = Object.values(assertions).every(Boolean) ? "pass" : "fail";
+const report = {
+  schema: "local-studio-system-one-one-turn-acceptance-v1",
+  verdict,
+  generated_at: new Date().toISOString(),
+  local_studio_head: gitHead(localStudioRoot),
+  my_jev_head: gitHead(myJevRepo),
+  base_url: baseUrl.toString(),
+  runtime_session_id: runtimeSessionId,
+  pi_session_id: piSessionId,
+  model_id: modelId,
+  project_cwd: projectCwd,
+  project_fingerprint: expectedCwdFingerprint,
+  snapshot_sha256: snapshotSha256,
+  response_id: responseId,
+  receipt_id: receiptId,
+  uhp_session_id: uhpSessionId,
+  task_focus_canary: canary,
+  fixture_path: fixturePath,
+  fixture_raw_sha256: fixtureRawSha256,
+  producer_evidence: producerEvidence,
+  command_outcome: command?.outcome ?? null,
+  status_before: snapshotStatus(beforeStatus),
+  status_after: snapshotStatus(afterStatus),
+  assertions,
+  evidence_rows: evidenceRows,
+};
+
+const reportPath = join(systemOneDir, "acceptance", `${responseId}.json`);
+writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+process.stdout.write(JSON.stringify({ ...report, report_path: reportPath }, null, 2) + "\n");
+
+if (verdict !== "pass") process.exitCode = 1;
