@@ -165,3 +165,44 @@ Before using learned advice, verify with deterministic/recorded responses that:
 
 After this contract is stable, my-jev and later Bonsai decision providers can sit behind the same UHP
 profile without changing Local Studio.
+
+
+## Cross-repo deterministic acceptance
+
+The matching producer fixture suite lives in `scottjoyner/my-jev#2`.
+
+After installing that branch, render all consumer-boundary cases:
+
+```bash
+my-jev-uhp-fixture-suite \
+  --output-dir /tmp/system-one-acceptance
+```
+
+It produces a SHA-pinned manifest plus five response files:
+
+| file | expected Local Studio result |
+| --- | --- |
+| `valid.json` | consumed |
+| `expired.json` | ignored: `expired` |
+| `authority-bearing.json` | ignored: `authority_mutation_allowed` |
+| `model-fallback.json` | ignored: `model_fallback` |
+| `handoff.json` | ignored: `system_one_handoff` |
+
+For each case:
+
+```bash
+export LOCAL_STUDIO_SYSTEM_ONE_ADVISORY_PATH=/tmp/system-one-acceptance/<case>.json
+```
+
+Then run one ordinary coding-agent turn and inspect:
+
+```text
+<LOCAL_STUDIO_DATA_DIR>/system-one/consumption.jsonl
+```
+
+Only the valid case may add the `Local Studio System-One advisory:` system
+context. Invalid or handoff cases must inject nothing and append an ignored
+evidence record with the expected reason.
+
+This acceptance pass does not require a learned model, a fleet dispatch, a
+Neo4j mutation, or a live HarnessRouter deployment.
