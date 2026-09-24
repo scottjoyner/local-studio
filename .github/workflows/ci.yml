@@ -165,7 +165,10 @@ jobs:
 
   dependency-review:
     name: Dependency Review
-    if: github.event_name == 'pull_request'
+    # GitHub's Dependency Review API is unavailable on forks without a
+    # repository dependency graph. Keep the security gate unchanged on the
+    # canonical repository and avoid a false-red job in development forks.
+    if: github.event_name == 'pull_request' && github.event.repository.fork == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
