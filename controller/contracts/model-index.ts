@@ -2,7 +2,7 @@ import { Schema } from "effect";
 export { default as bundledModelIndexSource } from "./model-index.json";
 
 export const ModelIndexVariantSchema = Schema.Struct({
-  format: Schema.Literals(["bf16", "fp8", "nvfp4", "q4"]),
+  format: Schema.Literals(["bf16", "fp8", "nvfp4", "q4", "ternary"]),
   repo: Schema.String,
   official: Schema.Boolean,
   source: Schema.optional(Schema.String),
