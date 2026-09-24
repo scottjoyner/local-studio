@@ -324,3 +324,36 @@ This is the narrow proof that a stored UHP response influenced one provider-boun
 coding-agent turn while the existing Local Studio execution boundary stayed
 unchanged. It does not require a learned System-One model, fleet dispatch,
 runtime admission, claim mutation, approval grant, or Neo4j write.
+
+### Operator harness
+
+Run the agent runtime with an isolated `LOCAL_STUDIO_DATA_DIR`, then execute:
+
+```bash
+node scripts/system-one-one-turn-acceptance.mjs \
+  --model '<existing Local Studio coding model id>' \
+  --cwd /absolute/path/to/project \
+  --data-dir /tmp/local-studio-uhp-acceptance \
+  --my-jev-repo /absolute/path/to/my-jev \
+  --snapshot-sha256 '<exact heartbeat snapshot sha256>'
+```
+
+The harness deliberately uses two phases:
+
+1. a bootstrap prompt with no advisory present, solely to establish the canonical
+   Pi session id that the receipt must bind to
+2. exactly one read-only acceptance turn after generating the bound my-jev
+   fixture into `system-one/sessions/<pi-session-id>.json`
+
+It refuses to proceed when `system-one/latest.json` exists or the bootstrap
+produces any System-One ledger record, so unrelated advice cannot contaminate
+the proof.
+
+The generated report is written to:
+
+`<LOCAL_STUDIO_DATA_DIR>/system-one/acceptance/<response-id>.json`
+
+and contains the exact Local Studio and my-jev Git heads, source snapshot hash,
+raw fixture hash, producer canonical hashes, before/after runtime status,
+assertion results, and the append-only ledger rows for that response. A failed
+assertion returns a non-zero exit status.
