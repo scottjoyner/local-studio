@@ -43,6 +43,16 @@ const INFLUENCE_OUTCOMES = new Set([
   "turn_completed",
 ]);
 const READ_ONLY_TOOLS = ["find", "grep", "ls", "read"];
+const RUNTIME_PROVENANCE_FILES = [
+  "services/agent-runtime/src/runtime-provenance.ts",
+  "services/agent-runtime/src/system-one-advisory.ts",
+  "services/agent-runtime/src/pi-runtime.ts",
+  "services/agent-runtime/src/pi-runtime-types.ts",
+  "services/agent-runtime/src/http/handlers.ts",
+  "services/agent-runtime/src/server.ts",
+  "services/agent-runtime/package.json",
+  "services/agent-runtime/bun.lock",
+];
 
 function parseArgs(argv) {
   const values = new Map();
@@ -426,6 +436,11 @@ const ledgerCheckpointPrefix =
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = required(args, "expected-local-head");
 const expectedMyJevHead = required(args, "expected-my-jev-head");
+const runtimeProvenance = report?.runtime_provenance;
+const runtimeProvenanceFiles =
+  runtimeProvenance?.files && typeof runtimeProvenance.files === "object"
+    ? runtimeProvenance.files
+    : {};
 if (!isGitSha(expectedLocalHead) || !isGitSha(expectedMyJevHead)) {
   throw new Error("Expected Local Studio and my-jev heads must be exact 40-hex Git SHAs");
 }
@@ -443,6 +458,26 @@ const assertions = {
     report.local_studio_head === expectedLocalHead,
   expected_my_jev_head_matches:
     report.my_jev_head === expectedMyJevHead,
+  runtime_provenance_schema:
+    runtimeProvenance?.schema === "local-studio-agent-runtime-provenance-v1",
+  runtime_provenance_head_matches:
+    runtimeProvenance?.git_head === expectedLocalHead,
+  runtime_provenance_clean:
+    runtimeProvenance?.source_clean === true,
+  runtime_provenance_verified_mode:
+    runtimeProvenance?.mode === "built" || runtimeProvenance?.mode === "source",
+  runtime_provenance_manifest_hash_present:
+    isSha256(runtimeProvenance?.manifest_sha256),
+  runtime_provenance_report_hash_matches:
+    isSha256(report.runtime_provenance_sha256) &&
+    report.runtime_provenance_sha256 ===
+      sha256(JSON.stringify(runtimeProvenance)),
+  runtime_provenance_file_set_exact:
+    sameStrings(Object.keys(runtimeProvenanceFiles), RUNTIME_PROVENANCE_FILES),
+  runtime_provenance_file_hashes_valid:
+    RUNTIME_PROVENANCE_FILES.every((key) =>
+      isSha256(runtimeProvenanceFiles[key]),
+    ),
   snapshot_is_sha256: isSha256(report.snapshot_sha256),
   project_fingerprint_is_sha256: isSha256(report.project_fingerprint),
   fixture_raw_hash_matches_report:
@@ -630,6 +665,8 @@ const result = {
   ledger_checkpoint: report.ledger_checkpoint,
   local_studio_head: report.local_studio_head,
   my_jev_head: report.my_jev_head,
+  runtime_provenance: runtimeProvenance,
+  runtime_provenance_sha256: report.runtime_provenance_sha256,
   producer_mode: report.producer_mode,
   response_id: report.response_id,
   receipt_id: report.receipt_id,
