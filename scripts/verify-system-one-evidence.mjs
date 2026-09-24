@@ -317,6 +317,14 @@ function rowsAppearInOrder(ledgerRows, expectedRows) {
   return true;
 }
 
+function producerFileExists(path) {
+  try {
+    return existsSync(path) && lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function verifyProducer(report, systemOneDir, fixtureSha) {
   if (report.producer_mode !== "harnessrouter-script") {
     return {
@@ -343,7 +351,11 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   const tracePath = join(producerDir, "workspace", "trace.json");
   const storedResponsePath = join(producerDir, "stored-uhp-response.json");
   const sourceSnapshotPath = join(producerDir, "source-heartbeat-snapshot.json");
+  const signaturePath = join(producerDir, "stored-uhp-response.json.sig.json");
   const configPath = join(producerDir, "package", "config.yaml");
+  const producerSignaturePresent =
+    producerFileExists(signaturePath) ||
+    report.producer_signature_required === true;
   const paths = [
     [producerReportPath, "HarnessRouter producer report"],
     [recommendationPath, "HarnessRouter recommendation"],
@@ -351,6 +363,9 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
     [storedResponsePath, "HarnessRouter stored response"],
     [sourceSnapshotPath, "HarnessRouter source snapshot"],
     [configPath, "HarnessRouter System-One config"],
+    ...(producerSignaturePresent
+      ? [[signaturePath, "HarnessRouter detached signature"]]
+      : []),
   ];
   try {
     for (const [path, label] of paths) {
@@ -435,6 +450,14 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
         producer.response_sha256 === canonicalSha256(stored),
       producer_stored_response_matches_fixture:
         sha256File(storedResponsePath) === fixtureSha,
+      producer_signature_presence_matches:
+        producerSignaturePresent === (producer.producer_signature != null),
+      producer_signature_file_hash_matches:
+        !producerSignaturePresent ||
+        (
+          producer.producer_signature_file_sha256 === sha256File(signaturePath) &&
+          producer.producer_signature?.response_sha256 === fixtureSha
+        ),
       producer_script_model:
         producer?.result?.model === "script/s1" &&
         stored?.model === "script/s1",
@@ -475,6 +498,8 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       recommendation_sha256: sha256File(recommendationPath),
       trace_sha256: sha256File(tracePath),
       stored_response_sha256: sha256File(storedResponsePath),
+      signature_sha256:
+        producerSignaturePresent ? sha256File(signaturePath) : null,
       source_snapshot_raw_sha256: sha256File(sourceSnapshotPath),
       source_snapshot_canonical_sha256: canonicalSha256(sourceSnapshot),
       systemone_config_sha256: sha256File(configPath),
