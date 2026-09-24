@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const TRACKED_FILES = [
   "services/agent-runtime/src/runtime-provenance.ts",
   "services/agent-runtime/src/system-one-advisory.ts",
+  "services/agent-runtime/src/system-one-signature.ts",
   "services/agent-runtime/src/pi-runtime.ts",
   "services/agent-runtime/src/pi-runtime-types.ts",
   "services/agent-runtime/src/http/handlers.ts",
