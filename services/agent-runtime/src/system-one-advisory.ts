@@ -29,7 +29,7 @@ const MAX_REASON = 256;
 const MAX_TASK_FOCUS = 600;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 const DEFAULT_MAX_TTL_SECONDS = 15 * 60;
-const MAX_CONFIGURABLE_TTL_SECONDS = 60 * 60;
+const MAX_CONFIGURABLE_TTL_SECONDS = DEFAULT_MAX_TTL_SECONDS;
 const MARKER = "Local Studio System-One advisory:";
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
