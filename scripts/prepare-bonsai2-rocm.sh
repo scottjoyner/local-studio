@@ -9,7 +9,9 @@ RELEASE_URL="https://github.com/PrismML-Eng/llama.cpp/releases/download/${RELEAS
 MODEL_REPO="prism-ml/Ternary-Bonsai-2-27B-gguf"
 MODEL_REVISION="6ed5e12bf84b7a63069882c91dd9e9218647d17b"
 MODEL_FILE="Ternary-Bonsai-2-27B-PQ2_0.gguf"
+MODEL_SHA256="3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1"
 MMPROJ_FILE="Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
+MMPROJ_SHA256="6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903"
 REQUIRED_ARCH="${LOCAL_STUDIO_BONSAI_REQUIRED_ARCH:-gfx1201}"
 ROOT="${LOCAL_STUDIO_BONSAI_ROOT:-$HOME/.local/share/local-studio/experimental/bonsai2-r9700}"
 BIN_DIR="$ROOT/runtime/${RELEASE_TAG}"
@@ -68,6 +70,21 @@ if [[ ! -f "$MODEL_DIR/$MODEL_FILE" || ! -f "$MODEL_DIR/$MMPROJ_FILE" ]]; then
     --local-dir "$MODEL_DIR"
 fi
 
+verify_sha256() {
+  local path="$1"
+  local expected="$2"
+  local label="$3"
+  local actual
+  actual="$(sha256sum "$path" | awk '{print $1}')"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "error: $label checksum mismatch: expected $expected, got $actual" >&2
+    exit 1
+  fi
+}
+
+verify_sha256 "$MODEL_DIR/$MODEL_FILE" "$MODEL_SHA256" "Bonsai 2 PQ2 model"
+verify_sha256 "$MODEL_DIR/$MMPROJ_FILE" "$MMPROJ_SHA256" "Bonsai 2 projector"
+
 sha256sum "$LLAMA_SERVER" "$MODEL_DIR/$MODEL_FILE" "$MODEL_DIR/$MMPROJ_FILE" > "$ROOT/artifacts.sha256"
 
 LLAMA_SERVER="$LLAMA_SERVER" MODEL_PATH="$MODEL_DIR/$MODEL_FILE" MMPROJ_PATH="$MODEL_DIR/$MMPROJ_FILE" RECIPE_PATH="$RECIPE_PATH" node --input-type=module <<'NODE'
@@ -122,6 +139,8 @@ Prepared candidate R9700/Bonsai 2 runtime:
   recipe:       $RECIPE_PATH
   engine ref:   PrismML-Eng/llama.cpp@$RELEASE_COMMIT
   model ref:    $MODEL_REPO@$MODEL_REVISION
+  model sha256: $MODEL_SHA256
+  mmproj sha256: $MMPROJ_SHA256
 
 Import the recipe with:
   curl -fsS -X POST http://127.0.0.1:8080/recipes \
