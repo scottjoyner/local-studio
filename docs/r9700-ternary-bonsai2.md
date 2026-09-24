@@ -61,15 +61,26 @@ After an existing OpenCode session has exercised the intended local endpoint, th
 # Reuse an existing OpenCode session:
 export OPENCODE_SESSION_ID=<existing-session-id>
 
+# Pin the provider that maps to Local Studio. If omitted on the first run,
+# the exporter still writes a receipt showing the observed provider but
+# exits non-promotable so the provider can be pinned explicitly.
+export OPENCODE_EXPECTED_PROVIDER=<local-studio-provider-id>
+
 # Or prove the same endpoint through Hermes:
 export HERMES_SESSION_ID=<existing-hermes-session-id>
 
 bash scripts/validate-bonsai2-r9700.sh
 ```
 
-If immutable OpenCode evidence is already a known file, use `OPENCODE_SESSION_FILE=/path/to/session-or-report.jsonl`. For Hermes, `HERMES_SESSION_ID` asks the current `hermes` CLI to export that session as a redacted JSONL receipt before capture; the default output is `$LOCAL_STUDIO_BONSAI_ROOT/hermes-session.evidence.jsonl`. Set `HERMES_SESSION_FILE=/path/to/already-exported-session.jsonl` to reuse an existing export instead. OpenCode and Hermes evidence can both be supplied in the same run.
+When `OPENCODE_SESSION_ID` is set, the harness now invokes OpenCode's sanitized JSON export itself and writes two immutable artifacts under the candidate root by default: `opencode-session.sanitized.json` and `opencode-session.receipt.json`. The receipt checks only the final user turn, so earlier remote/model history does not invalidate a later local acceptance turn; every assistant message after that final user message must stay on the explicitly expected provider/model and at least one tool call must complete. The sanitized export is hashed and attached separately to preserve the receipt → export chain without copying transcript contents into the main Local Studio manifest.
+
+If immutable legacy OpenCode evidence is already a known file, `OPENCODE_SESSION_FILE=/path/to/session-or-report.jsonl` is still recorded, but the automated receipt path is the preferred acceptance evidence. Override the output paths with `OPENCODE_SESSION_EXPORT` and `OPENCODE_SESSION_RECEIPT`, and raise the minimum completed tool count with `OPENCODE_MIN_COMPLETED_TOOLS`.
+
+For Hermes, `HERMES_SESSION_ID` asks the current `hermes` CLI to export that session as a redacted JSONL receipt before capture; the default output is `$LOCAL_STUDIO_BONSAI_ROOT/hermes-session.evidence.jsonl`. Set `HERMES_SESSION_FILE=/path/to/already-exported-session.jsonl` to reuse an existing export instead. OpenCode and Hermes evidence can both be supplied in the same run.
 
 The harness prepares the pinned runtime/model, upserts the recipe, launches it only when it is not already running, waits for readiness, runs the built-in benchmark, captures controller/ROCm/client evidence, and prints the promotion blockers from the final manifest.
+
+The OpenCode receipt is generated from the CLI's sanitized JSON export, which preserves session/model/tool state while redacting transcript and tool payload contents. Promotion through the automated path therefore carries a file hash, exact provider/model identity for the final turn, completed-tool evidence, and explicit fallback detection.
 
 The command also probes Bonsai 2's native OpenAI-compatible `tools` response and requires a structured `report_acceptance` function call. It exits with status `3` when the candidate is healthy enough to inspect but still lacks one or more promotion gates. It never substitutes another model, device, runtime, or remote endpoint to make the verdict pass.
 
