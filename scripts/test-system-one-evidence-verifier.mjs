@@ -209,11 +209,35 @@ try {
   const markerPath = join(consumedDir, markerKey + ".json");
   writeFileSync(markerPath, JSON.stringify(marker), "utf8");
 
+  const runtimeFiles = Object.fromEntries(
+    [
+      "services/agent-runtime/src/runtime-provenance.ts",
+      "services/agent-runtime/src/system-one-advisory.ts",
+      "services/agent-runtime/src/pi-runtime.ts",
+      "services/agent-runtime/src/pi-runtime-types.ts",
+      "services/agent-runtime/src/http/handlers.ts",
+      "services/agent-runtime/src/server.ts",
+      "services/agent-runtime/package.json",
+      "services/agent-runtime/bun.lock",
+    ].map((key, index) => [key, String(index + 1).repeat(64).slice(0, 64)]),
+  );
+  const runtimeProvenance = {
+    schema: "local-studio-agent-runtime-provenance-v1",
+    git_head: localStudioHead,
+    source_clean: true,
+    files: runtimeFiles,
+    mode: "source",
+    started_at: "2026-09-24T12:00:00.000Z",
+    manifest_sha256: "8".repeat(64),
+  };
+
   const report = {
     schema: "local-studio-system-one-one-turn-acceptance-v2",
     verdict: "pass",
     local_studio_head: localStudioHead,
     my_jev_head: myJevHead,
+    runtime_provenance: runtimeProvenance,
+    runtime_provenance_sha256: sha256(JSON.stringify(runtimeProvenance)),
     source_checkouts_clean: true,
     source_heads_stable: true,
     producer_mode: "fixture",
@@ -288,6 +312,29 @@ try {
   if (wrongHeadResult.assertions.expected_local_head_matches !== false) {
     throw new Error("Verifier did not fail the wrong reviewed head");
   }
+
+  report.runtime_provenance.git_head = "4".repeat(40);
+  report.runtime_provenance_sha256 = sha256(
+    JSON.stringify(report.runtime_provenance),
+  );
+  writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+  const staleRuntime = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+  );
+  if (staleRuntime.status === 0) {
+    throw new Error("Expected stale running-runtime provenance to fail");
+  }
+  const staleRuntimeResult = JSON.parse(staleRuntime.stdout);
+  if (staleRuntimeResult.assertions.runtime_provenance_head_matches !== false) {
+    throw new Error("Verifier did not reject stale running-runtime provenance");
+  }
+  report.runtime_provenance.git_head = localStudioHead;
+  report.runtime_provenance_sha256 = sha256(
+    JSON.stringify(report.runtime_provenance),
+  );
 
   report.evidence_rows[3].assistant_text_sha256 = "e".repeat(64);
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
