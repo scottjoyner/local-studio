@@ -6,6 +6,14 @@ import { spawnSync } from "node:child_process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const renderer = join(repoRoot, "scripts", "render-r9700-bonsai-omarchy-candidate.mjs");
+const dockerfile = readFileSync(
+  join(repoRoot, "packaging", "r9700-bonsai2-rocm", "Dockerfile"),
+  "utf8",
+);
+const acquire = readFileSync(
+  join(repoRoot, "packaging", "r9700-bonsai2-rocm", "omp-acquire.sh"),
+  "utf8",
+);
 const temp = mkdtempSync(join(tmpdir(), "local-studio-omarchy-package-"));
 
 try {
@@ -111,6 +119,28 @@ try {
   const assert = (condition, message) => {
     if (!condition) throw new Error(message);
   };
+
+  assert(
+    dockerfile.includes(
+      "rocm/dev-ubuntu-24.04:7.2.1-complete@sha256:3db551c4e1229aac1857ac44fcb6141bb749f41348eb572452f11279153c13c3",
+    ),
+    "ROCm base image is not pinned by digest",
+  );
+  assert(
+    dockerfile.includes(
+      "230f879d538bb9f794d25c908bc8c0f676774c41c3e70ea719131c86d899841d",
+    ),
+    "Prism ROCm release archive hash is not pinned",
+  );
+  assert(
+    acquire.includes(
+      "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1",
+    ) &&
+      acquire.includes(
+        "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903",
+      ),
+    "Bonsai model/projector hashes are not pinned in the image acquisition path",
+  );
 
   assert(packaged.status === "candidate", "portable handoff changed validation status");
   assert(packaged.launch.kind === "reference", "portable handoff replaced observed launch");
