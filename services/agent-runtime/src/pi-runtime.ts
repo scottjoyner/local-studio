@@ -302,9 +302,10 @@ class PiSdkSession extends EventEmitter implements PiAgentSession {
                               },
                               {
                                 name: "local-studio-system-one-advisory",
-                                factory: createSystemOneAdvisoryPromptExtension(() =>
-                                  sessionManager.getSessionId(),
-                                ),
+                                factory: createSystemOneAdvisoryPromptExtension(() => ({
+                                  piSessionId: sessionManager.getSessionId(),
+                                  cwd,
+                                })),
                               },
                             ],
                             // Vision guidance is APPENDED, not substituted. This branch used to
