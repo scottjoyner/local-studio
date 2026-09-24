@@ -436,12 +436,15 @@ function ledgerPath(): string {
   return path.join(resolveDataDir(), "system-one", "consumption.jsonl");
 }
 
-function appendLedger(entry: JsonRecord): void {
+function appendLedger(entry: JsonRecord): boolean {
   try {
     const filepath = ledgerPath();
     mkdirSync(path.dirname(filepath), { recursive: true });
     appendFileSync(filepath, `${JSON.stringify(entry)}\n`, "utf8");
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function consumeMarkerPath(context: ConsumerContext, responseSha256: string): string {
@@ -549,7 +552,7 @@ function consumeSystemOneAdvisoryPrompt(
     });
     return null;
   }
-  appendLedger({
+  const ledgerWritten = appendLedger({
     at: new Date().toISOString(),
     outcome: "consumed",
     pi_session_id: context.piSessionId,
@@ -572,6 +575,7 @@ function consumeSystemOneAdvisoryPrompt(
     fleet_handles: advisory.fleetPriority.map((item) => item.handle),
     authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
   });
+  if (!ledgerWritten) return null;
   return {
     systemPrompt: `${systemPrompt.trimEnd()}\n\n${advisorySection(advisory)}`,
     advisory,
