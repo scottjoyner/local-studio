@@ -134,6 +134,8 @@ try {
       advisory_marker_present: true,
       response_id_present: true,
       receipt_id_present: true,
+      task_focus_present: true,
+      task_focus_sha256: sha256(canary),
       provider_model_matches_expected: true,
       provider_tools_match_active: true,
     },
