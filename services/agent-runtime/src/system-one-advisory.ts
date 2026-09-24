@@ -100,6 +100,18 @@ function record(value: unknown): JsonRecord | null {
     : null;
 }
 
+function recordHasShape(
+  value: JsonRecord,
+  allowed: readonly string[],
+  required: readonly string[] = allowed,
+): boolean {
+  const allowedSet = new Set(allowed);
+  return (
+    Object.keys(value).every((key) => allowedSet.has(key)) &&
+    required.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
+}
+
 function boundedString(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -272,6 +284,21 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
 
   const profile = record(metadata.hermes_system_one);
   if (!profile) return { outcome: "ignored", reason: "missing_advisory_profile", responseSha256 };
+  if (
+    !recordHasShape(profile, [
+      "profile",
+      "uhp_version",
+      "contract_sha256",
+      "receipt_id",
+      "observed_at",
+      "expires_at",
+      "binding",
+      "advice",
+      "authority",
+      "provenance",
+    ])
+  )
+    return { outcome: "ignored", reason: "advisory_profile_shape_mismatch", responseSha256 };
   if (profile.profile !== PROFILE)
     return { outcome: "ignored", reason: "unsupported_advisory_profile", responseSha256 };
   if (profile.uhp_version !== UHP_VERSION)
@@ -303,6 +330,16 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
 
   const binding = record(profile.binding);
   if (!binding) return { outcome: "ignored", reason: "missing_binding", responseSha256 };
+  if (
+    !recordHasShape(binding, [
+      "consumer",
+      "work_id",
+      "consumer_session_id",
+      "project_fingerprint",
+      "snapshot_sha256",
+    ])
+  )
+    return { outcome: "ignored", reason: "binding_shape_mismatch", responseSha256 };
   const consumer = boundedString(binding.consumer, 64);
   const workId = boundedString(binding.work_id, 128);
   const consumerSessionId = boundedString(binding.consumer_session_id, 128);
@@ -322,15 +359,30 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
   const authority = record(profile.authority);
   if (!authority)
     return { outcome: "ignored", reason: "missing_authority", responseSha256 };
+  if (!recordHasShape(authority, REQUIRED_AUTHORITY_FALSE))
+    return { outcome: "ignored", reason: "authority_shape_mismatch", responseSha256 };
   for (const key of REQUIRED_AUTHORITY_FALSE) {
     if (authority[key] !== false)
       return { outcome: "ignored", reason: `authority_${key}`, responseSha256 };
   }
-  if (Object.values(authority).some((value) => value === true))
-    return { outcome: "ignored", reason: "authority_extension_true", responseSha256 };
-
   const advice = record(profile.advice);
   if (!advice) return { outcome: "ignored", reason: "missing_advice", responseSha256 };
+  if (
+    !recordHasShape(
+      advice,
+      [
+        "mode",
+        "mode_confidence",
+        "policy_disposition",
+        "approval_recommended",
+        "task_focus",
+        "context_priority",
+        "fleet_priority",
+      ],
+      ["mode", "mode_confidence", "task_focus", "context_priority", "fleet_priority"],
+    )
+  )
+    return { outcome: "ignored", reason: "advice_shape_mismatch", responseSha256 };
 
   const mode = boundedString(advice.mode, 32);
   if (!mode || !MODES.has(mode))
@@ -359,7 +411,7 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
       return { outcome: "ignored", reason: "invalid_task_focus", responseSha256 };
   }
 
-  const contextRaw = advice.context_priority ?? [];
+  const contextRaw = advice.context_priority;
   if (!Array.isArray(contextRaw) || contextRaw.length > MAX_CONTEXT_PRIORITY)
     return { outcome: "ignored", reason: "invalid_context_priority", responseSha256 };
   const contextPriority: string[] = [];
@@ -370,7 +422,7 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
     contextPriority.push(value);
   }
 
-  const fleetRaw = advice.fleet_priority ?? [];
+  const fleetRaw = advice.fleet_priority;
   if (!Array.isArray(fleetRaw) || fleetRaw.length > MAX_FLEET_PRIORITY)
     return { outcome: "ignored", reason: "invalid_fleet_priority", responseSha256 };
   const fleetPriority: Array<{ handle: string; score: number; reason: string | null }> = [];
@@ -379,6 +431,8 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
     const item = record(entry);
     if (!item)
       return { outcome: "ignored", reason: "invalid_fleet_priority", responseSha256 };
+    if (!recordHasShape(item, ["handle", "score", "reason"]))
+      return { outcome: "ignored", reason: "fleet_item_shape_mismatch", responseSha256 };
     const handle = boundedString(item.handle, MAX_LABEL);
     if (!handle || !/^[a-zA-Z0-9._:-]+$/.test(handle) || handles.has(handle))
       return { outcome: "ignored", reason: "invalid_fleet_handle", responseSha256 };
@@ -395,7 +449,21 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
     fleetPriority.push({ handle, score, reason });
   }
 
-  const provenance = record(profile.provenance) ?? {};
+  const provenance = record(profile.provenance);
+  if (!provenance)
+    return { outcome: "ignored", reason: "missing_provenance", responseSha256 };
+  if (
+    !recordHasShape(provenance, [
+      "system_one_config_version",
+      "model_revision",
+      "knowledge_revision",
+      "neo4j_snapshot_id",
+      "fleet_projection_generation",
+      "fleet_projection_checksum",
+      "trace_sha256",
+    ])
+  )
+    return { outcome: "ignored", reason: "provenance_shape_mismatch", responseSha256 };
   for (const [key, value] of Object.entries(provenance)) {
     if (value != null && (typeof value !== "string" || value.length > 300))
       return { outcome: "ignored", reason: "invalid_provenance", responseSha256 };
