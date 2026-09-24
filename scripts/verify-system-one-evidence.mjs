@@ -8,8 +8,14 @@ const CONTRACT_SHA256 =
   "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
 const HARNESSROUTER_HEAD =
   "250de65d6e690abdef40e39d21591b4a807984a3";
+const HARNESSROUTER_DRIVER_BLOB_SHA1 =
+  "7cb3516a14b4f947e396a20735db4eb419a3db12";
 const SYSTEMONE_PROVIDER_BLOB_SHA1 =
   "008ddd09fe8e2c85ee3b8316cf25062c28b59c1c";
+const SYSTEMONE_PACKAGE_MANIFEST_SHA256 =
+  "3a69281583ccccefd3e4d5422939703c842b00b92e2bfa9fc374293a94e15a74";
+const SYSTEMONE_CONFIG_SHA256 =
+  "459cc500b481878aa1445a6176bb8a6b61db51981696afcc6dd65f9fe3700f4e";
 const AUTHORITY_KEYS = [
   "dispatch_allowed",
   "approval_granted",
@@ -199,9 +205,17 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
         producer.schema === "my-jev-harnessrouter-script-probe-v1",
       producer_harnessrouter_head_pinned:
         producer.harnessrouter_head === HARNESSROUTER_HEAD,
+      producer_harnessrouter_driver_blob_pinned:
+        producer.harnessrouter_driver_git_blob_sha1 ===
+        HARNESSROUTER_DRIVER_BLOB_SHA1,
       producer_systemone_provider_blob_pinned:
         producer?.systemone_harness?.provider_git_blob_sha1 ===
         SYSTEMONE_PROVIDER_BLOB_SHA1,
+      producer_systemone_package_manifest_pinned:
+        producer?.systemone_harness?.package_manifest_sha256 ===
+        SYSTEMONE_PACKAGE_MANIFEST_SHA256,
+      producer_systemone_config_pinned:
+        producer.systemone_config_sha256 === SYSTEMONE_CONFIG_SHA256,
       producer_my_jev_head_matches: producer.my_jev_head === report.my_jev_head,
       producer_snapshot_matches:
         producer.snapshot_sha256 === report.snapshot_sha256 &&
