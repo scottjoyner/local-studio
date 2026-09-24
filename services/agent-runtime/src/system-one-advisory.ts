@@ -39,6 +39,25 @@ type ConsumerContext = {
   cwd: string;
 };
 
+type RuntimeEvidenceContext = {
+  piSessionId: string | null;
+  cwd: string;
+  selectedModelId: string;
+  providerId: string;
+  backendModelId: string;
+};
+
+type TurnEvidence = {
+  advisory: SystemOneAdvisory;
+  selectedModelId: string;
+  providerId: string;
+  backendModelId: string;
+  cwdFingerprint: string;
+  activeTools: string[];
+  providerRequestCount: number;
+  toolCallCount: number;
+};
+
 export type SystemOneAdvisory = {
   uhpVersion: string;
   contractSha256: string;
@@ -116,6 +135,43 @@ function canonicalize(value: unknown): unknown {
 
 function canonicalSha256(value: unknown): string {
   return sha256(JSON.stringify(canonicalize(value)));
+}
+
+function safeJson(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function providerPayloadModel(payload: unknown): string | null {
+  const body = record(payload);
+  return body ? boundedString(body.model, 300) : null;
+}
+
+function providerPayloadTools(payload: unknown): string[] {
+  const body = record(payload);
+  if (!body || !Array.isArray(body.tools)) return [];
+  const names = new Set<string>();
+  for (const entry of body.tools) {
+    const tool = record(entry);
+    if (!tool) continue;
+    const fn = record(tool.function);
+    const name = boundedString(tool.name ?? fn?.name, MAX_LABEL);
+    if (name) names.add(name);
+  }
+  return [...names].sort();
+}
+
+function sortedStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  const a = sortedStrings(left);
+  const b = sortedStrings(right);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function normalizedProjectPath(cwd: string): string {
@@ -457,10 +513,10 @@ function advisorySection(advisory: SystemOneAdvisory): string {
   ].join("\n");
 }
 
-export function appendSystemOneAdvisoryPrompt(
+function consumeSystemOneAdvisoryPrompt(
   systemPrompt: string,
   context: ConsumerContext,
-): string | null {
+): { systemPrompt: string; advisory: SystemOneAdvisory } | null {
   if (systemPrompt.includes(MARKER)) return null;
   const candidate = readCandidate(context.piSessionId);
   if (!candidate) return null;
@@ -516,21 +572,136 @@ export function appendSystemOneAdvisoryPrompt(
     fleet_handles: advisory.fleetPriority.map((item) => item.handle),
     authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
   });
-  return `${systemPrompt.trimEnd()}\n\n${advisorySection(advisory)}`;
+  return {
+    systemPrompt: `${systemPrompt.trimEnd()}\n\n${advisorySection(advisory)}`,
+    advisory,
+  };
+}
+
+
+export function appendSystemOneAdvisoryPrompt(
+  systemPrompt: string,
+  context: ConsumerContext,
+): string | null {
+  return consumeSystemOneAdvisoryPrompt(systemPrompt, context)?.systemPrompt ?? null;
 }
 
 export function createSystemOneAdvisoryPromptExtension(
-  getContext: () => { piSessionId: string | null; cwd: string },
+  getContext: () => RuntimeEvidenceContext,
 ) {
   return (pi: ExtensionAPI): void => {
+    let turnEvidence: TurnEvidence | null = null;
+
     pi.on("before_agent_start", (event) => {
-      const context = getContext();
-      if (!context.piSessionId || !context.cwd) return {};
-      const next = appendSystemOneAdvisoryPrompt(event.systemPrompt, {
-        piSessionId: context.piSessionId,
-        cwd: context.cwd,
+      turnEvidence = null;
+      const runtime = getContext();
+      if (!runtime.piSessionId || !runtime.cwd) return {};
+      const consumed = consumeSystemOneAdvisoryPrompt(event.systemPrompt, {
+        piSessionId: runtime.piSessionId,
+        cwd: runtime.cwd,
       });
-      return next ? { systemPrompt: next } : {};
+      if (!consumed) return {};
+
+      const activeTools = sortedStrings(event.systemPromptOptions.selectedTools ?? []);
+      turnEvidence = {
+        advisory: consumed.advisory,
+        selectedModelId: runtime.selectedModelId,
+        providerId: runtime.providerId,
+        backendModelId: runtime.backendModelId,
+        cwdFingerprint: systemOneProjectFingerprint(runtime.cwd),
+        activeTools,
+        providerRequestCount: 0,
+        toolCallCount: 0,
+      };
+      appendLedger({
+        at: new Date().toISOString(),
+        outcome: "turn_boundary_captured",
+        pi_session_id: runtime.piSessionId,
+        response_id: consumed.advisory.responseId,
+        receipt_id: consumed.advisory.receiptId,
+        selected_model_id: runtime.selectedModelId,
+        provider_id: runtime.providerId,
+        backend_model_id: runtime.backendModelId,
+        cwd_fingerprint: turnEvidence.cwdFingerprint,
+        active_tools: activeTools,
+        active_tools_sha256: canonicalSha256(activeTools),
+        authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
+      });
+      return { systemPrompt: consumed.systemPrompt };
+    });
+
+    pi.on("before_provider_request", (event) => {
+      const evidence = turnEvidence;
+      if (!evidence) return;
+      evidence.providerRequestCount += 1;
+      const payloadText = safeJson(event.payload);
+      const providerModel = providerPayloadModel(event.payload);
+      const providerTools = providerPayloadTools(event.payload);
+      appendLedger({
+        at: new Date().toISOString(),
+        outcome: "provider_request_observed",
+        pi_session_id: evidence.advisory.binding.consumerSessionId,
+        response_id: evidence.advisory.responseId,
+        receipt_id: evidence.advisory.receiptId,
+        provider_request_index: evidence.providerRequestCount,
+        provider_request_sha256: payloadText ? sha256(payloadText) : null,
+        advisory_marker_present: payloadText?.includes(MARKER) ?? false,
+        response_id_present: payloadText?.includes(evidence.advisory.responseId) ?? false,
+        receipt_id_present: payloadText?.includes(evidence.advisory.receiptId) ?? false,
+        provider_model: providerModel,
+        expected_backend_model_id: evidence.backendModelId,
+        provider_model_matches_expected:
+          providerModel == null ? null : providerModel === evidence.backendModelId,
+        provider_tools: providerTools,
+        active_tools: evidence.activeTools,
+        provider_tools_match_active:
+          providerTools.length === 0 && evidence.activeTools.length > 0
+            ? null
+            : sameStrings(providerTools, evidence.activeTools),
+      });
+    });
+
+    pi.on("tool_call", () => {
+      if (turnEvidence) turnEvidence.toolCallCount += 1;
+      return undefined;
+    });
+
+    pi.on("agent_end", (event) => {
+      const evidence = turnEvidence;
+      if (!evidence) return;
+      const runtime = getContext();
+      const endCwdFingerprint = runtime.cwd ? systemOneProjectFingerprint(runtime.cwd) : null;
+      const messagesText = safeJson(event.messages);
+      appendLedger({
+        at: new Date().toISOString(),
+        outcome: "turn_completed",
+        pi_session_id: evidence.advisory.binding.consumerSessionId,
+        response_id: evidence.advisory.responseId,
+        receipt_id: evidence.advisory.receiptId,
+        selected_model_id_before: evidence.selectedModelId,
+        selected_model_id_after: runtime.selectedModelId,
+        selected_model_unchanged: runtime.selectedModelId === evidence.selectedModelId,
+        provider_id_before: evidence.providerId,
+        provider_id_after: runtime.providerId,
+        backend_model_id_before: evidence.backendModelId,
+        backend_model_id_after: runtime.backendModelId,
+        provider_route_unchanged:
+          runtime.providerId === evidence.providerId &&
+          runtime.backendModelId === evidence.backendModelId,
+        cwd_fingerprint_before: evidence.cwdFingerprint,
+        cwd_fingerprint_after: endCwdFingerprint,
+        cwd_unchanged: endCwdFingerprint === evidence.cwdFingerprint,
+        active_tools_at_injection: evidence.activeTools,
+        active_tools_sha256: canonicalSha256(evidence.activeTools),
+        provider_request_count: evidence.providerRequestCount,
+        tool_call_count: evidence.toolCallCount,
+        task_focus_observed_in_agent_messages:
+          evidence.advisory.taskFocus == null
+            ? null
+            : messagesText?.includes(evidence.advisory.taskFocus) ?? false,
+        authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
+      });
+      turnEvidence = null;
     });
   };
 }
