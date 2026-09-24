@@ -41,10 +41,20 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
-function runVerifier(verifier, report) {
-  return spawnSync(process.execPath, [verifier, "--report", report], {
-    encoding: "utf8",
-  });
+function runVerifier(verifier, report, localHead, myJevHead) {
+  return spawnSync(
+    process.execPath,
+    [
+      verifier,
+      "--report",
+      report,
+      "--expected-local-head",
+      localHead,
+      "--expected-my-jev-head",
+      myJevHead,
+    ],
+    { encoding: "utf8" },
+  );
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -69,6 +79,8 @@ try {
   const projectFingerprint = "a".repeat(64);
   const snapshotSha256 = "b".repeat(64);
   const modelId = "coding-model:test";
+  const localStudioHead = "1".repeat(40);
+  const myJevHead = "2".repeat(40);
 
   const profile = {
     contract_sha256: CONTRACT_SHA256,
@@ -199,8 +211,8 @@ try {
   const report = {
     schema: "local-studio-system-one-one-turn-acceptance-v2",
     verdict: "pass",
-    local_studio_head: "1".repeat(40),
-    my_jev_head: "2".repeat(40),
+    local_studio_head: localStudioHead,
+    my_jev_head: myJevHead,
     producer_mode: "fixture",
     snapshot_sha256: snapshotSha256,
     project_fingerprint: projectFingerprint,
@@ -231,7 +243,7 @@ try {
   const reportPath = join(acceptanceDir, responseId + ".json");
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  const valid = runVerifier(verifier, reportPath);
+  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
   if (valid.status !== 0) {
     throw new Error(
       "Expected synthetic valid bundle to pass:\n" +
@@ -243,10 +255,24 @@ try {
     throw new Error("Verifier returned non-pass verdict for valid bundle");
   }
 
+  const wrongHead = runVerifier(
+    verifier,
+    reportPath,
+    "3".repeat(40),
+    myJevHead,
+  );
+  if (wrongHead.status === 0) {
+    throw new Error("Expected wrong reviewed Local Studio head to fail");
+  }
+  const wrongHeadResult = JSON.parse(wrongHead.stdout);
+  if (wrongHeadResult.assertions.expected_local_head_matches !== false) {
+    throw new Error("Verifier did not fail the wrong reviewed head");
+  }
+
   report.evidence_rows[3].assistant_text_sha256 = "e".repeat(64);
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  const tampered = runVerifier(verifier, reportPath);
+  const tampered = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
   if (tampered.status === 0) {
     throw new Error("Expected tampered assistant evidence to fail");
   }
@@ -264,7 +290,7 @@ try {
   report.evidence_rows[3].assistant_text_sha256 = sha256(canary);
   report.producer_mode = "harnessrouter-script";
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
-  const modeTampered = runVerifier(verifier, reportPath);
+  const modeTampered = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
   if (modeTampered.status === 0) {
     throw new Error("Expected producer-mode tampering to fail");
   }
