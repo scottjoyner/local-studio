@@ -460,6 +460,9 @@ const assertions = {
   no_tool_calls: completed?.tool_call_count === 0,
   task_focus_reached_agent_messages:
     completed?.task_focus_observed_in_agent_messages === true,
+  task_focus_echo_exact: completed?.task_focus_echo_exact === true,
+  assistant_text_hash_matches_canary:
+    completed?.assistant_text_sha256 === sha256(canary),
   selected_model_unchanged: completed?.selected_model_unchanged === true,
   provider_route_unchanged: completed?.provider_route_unchanged === true,
   cwd_unchanged: completed?.cwd_unchanged === true,
