@@ -7,6 +7,7 @@ ROOT="${LOCAL_STUDIO_BONSAI_ROOT:-$HOME/.local/share/local-studio/experimental/b
 CONTROLLER="${LOCAL_STUDIO_URL:-http://127.0.0.1:8080}"
 OUTPUT="${LOCAL_STUDIO_BONSAI_EVIDENCE:-$ROOT/r9700-bonsai2-acceptance.evidence.json}"
 HERMES_SESSION_EXPORT="${HERMES_SESSION_EXPORT:-$ROOT/hermes-session.evidence.jsonl}"
+REGISTRY_HANDOFF="${LOCAL_STUDIO_BONSAI_REGISTRY_HANDOFF:-$ROOT/registry-handoff}"
 RECIPE="$ROOT/bonsai2-r9700.recipe.json"
 MODEL="$ROOT/models/Ternary-Bonsai-2-27B-PQ2_0.gguf"
 PROJECTOR="$ROOT/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
@@ -147,3 +148,9 @@ OUTPUT="$OUTPUT" node --input-type=module -e '
   }, null, 2) + "\n");
   if (summary.candidatePromotable !== true) process.exitCode = 3;
 '
+
+node "$REPO_ROOT/scripts/render-r9700-bonsai-registry-candidate.mjs" \
+  --evidence "$OUTPUT" \
+  --output-dir "$REGISTRY_HANDOFF"
+
+echo "Registry handoff ready: $REGISTRY_HANDOFF"
