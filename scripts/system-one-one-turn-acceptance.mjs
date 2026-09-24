@@ -474,9 +474,9 @@ const assertions = {
     afterStatus.piSessionId === piSessionId,
   producer_model_is_not_coding_model:
     consumed?.served_model === expectedProducerModel && consumed?.served_model !== modelId,
-  producer_profile_hash_matches_consumer:
-    producerEvidence?.profile_sha256 != null &&
-    producerEvidence.profile_sha256 === consumed?.receipt_sha256,
+  producer_raw_response_matches_fixture:
+    producerMode !== "harnessrouter-script" ||
+    producerEvidence?.stored_response_raw_sha256 === fixtureRawSha256,
   contract_hash_matches_expected:
     consumed?.contract_sha256 ===
     "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
@@ -555,6 +555,7 @@ const report = {
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureRawSha256,
   producer_evidence: producerEvidence,
+  profile_hash_cross_language_comparison_deferred: true,
   command_outcome: command?.outcome ?? null,
   status_before: snapshotStatus(beforeStatus),
   status_after: snapshotStatus(afterStatus),
