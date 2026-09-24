@@ -275,3 +275,52 @@ The matching `my-jev#2` fixture suite now includes:
 
 A valid response consumed a second time should produce
 `replay_already_consumed`.
+
+## One-turn causal acceptance evidence
+
+The consumer records three additional append-only evidence stages for a consumed
+advisory. These are observational only; they do not expose a new runtime API or
+change model, tool, routing, approval, claim, or mutation state.
+
+1. `turn_boundary_captured`
+   - exact selected Local Studio model id
+   - provider id and backend model id
+   - canonical cwd fingerprint
+   - active Pi tool names and their canonical SHA-256
+   - the same explicit all-false authority assertion
+2. `provider_request_observed`
+   - SHA-256 of the outbound provider payload, never the payload itself
+   - whether the advisory marker, response id, and receipt id are present
+   - observed provider model and expected backend model
+   - observed provider tool declarations and whether they match the active Pi tools
+3. `turn_completed`
+   - selected model before/after and an equality assertion
+   - provider/backend route before/after and an equality assertion
+   - cwd fingerprint before/after and an equality assertion
+   - provider-request count and passive tool-call count
+   - whether the advisory `task_focus` value appeared in the agent messages
+   - the unchanged all-false authority assertion
+
+The smallest causal acceptance uses a unique canary only in
+`metadata.hermes_system_one.advice.task_focus`, then asks one read-only coding
+turn to return that value exactly without using tools.
+
+For that turn, the evidence package passes only when all of the following hold:
+
+- the consumed response id and receipt id are the intended exact fixture
+- `advisory_marker_present == true`
+- `response_id_present == true`
+- `receipt_id_present == true`
+- `provider_model_matches_expected == true`
+- `provider_tools_match_active == true`
+- `task_focus_observed_in_agent_messages == true`
+- `selected_model_unchanged == true`
+- `provider_route_unchanged == true`
+- `cwd_unchanged == true`
+- `tool_call_count == 0`
+- every authority field remains exactly `false`
+
+This is the narrow proof that a stored UHP response influenced one provider-bound
+coding-agent turn while the existing Local Studio execution boundary stayed
+unchanged. It does not require a learned System-One model, fleet dispatch,
+runtime admission, claim mutation, approval grant, or Neo4j write.
