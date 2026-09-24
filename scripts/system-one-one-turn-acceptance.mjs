@@ -387,11 +387,68 @@ const assertions = {
     afterStatus.piSessionId === piSessionId,
   producer_model_is_not_coding_model:
     consumed?.served_model === "recorded/jev" && consumed?.served_model !== modelId,
+  producer_profile_hash_matches_consumer:
+    producerEvidence?.profile_sha256 != null &&
+    producerEvidence.profile_sha256 === consumed?.receipt_sha256,
+  contract_hash_matches_expected:
+    consumed?.contract_sha256 ===
+    "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
+  harness_is_expected_system_one:
+    consumed?.harness_id === "chrn_system_one",
+  binding_session_matches:
+    consumed?.binding?.consumerSessionId === piSessionId,
+  binding_project_matches:
+    consumed?.binding?.projectFingerprint === expectedCwdFingerprint,
+  binding_snapshot_matches:
+    consumed?.binding?.snapshotSha256 === snapshotSha256,
 };
+
+// Re-present the exact same receipt for one control turn. The coding model may
+// still answer the user, but the System-One receipt must not be injected again.
+const replayLedgerStart = readLedger(ledgerPath).length;
+const replayBefore = await runtimeStatus(baseUrl, runtimeSessionId);
+const replayCommand = await sendTurn(baseUrl, {
+  mode: "prompt",
+  sessionId: runtimeSessionId,
+  modelId,
+  cwd: projectCwd,
+  piSessionId,
+  toolAccess: "read_only",
+  message: "Reply exactly REPLAY_CONTROL_OK. Do not use tools.",
+});
+const replayAfter = await waitForIdle(
+  baseUrl,
+  runtimeSessionId,
+  Number(replayBefore?.status?.eventSeq ?? -1),
+  timeoutMs,
+);
+const replayRows = readLedger(ledgerPath).slice(replayLedgerStart);
+const replayForReceipt = replayRows.filter((row) => row.receipt_id === receiptId);
+const replayIgnored = replayForReceipt.find(
+  (row) => row.outcome === "ignored" && row.reason === "replay_already_consumed",
+);
+const replayInfluenceRows = replayForReceipt.filter((row) =>
+  ["consumed", "turn_boundary_captured", "provider_request_observed", "turn_completed"].includes(
+    row.outcome,
+  ),
+);
+
+Object.assign(assertions, {
+  replay_is_rejected: Boolean(replayIgnored),
+  replay_has_no_advisory_influence_rows: replayInfluenceRows.length === 0,
+  replay_runtime_model_unchanged:
+    replayBefore?.status?.modelId === modelId && replayAfter?.status?.modelId === modelId,
+  replay_runtime_cwd_unchanged:
+    realpathSync(replayBefore?.status?.cwd) === projectCwd &&
+    realpathSync(replayAfter?.status?.cwd) === projectCwd,
+  replay_pi_session_unchanged:
+    replayBefore?.status?.piSessionId === piSessionId &&
+    replayAfter?.status?.piSessionId === piSessionId,
+});
 
 const verdict = Object.values(assertions).every(Boolean) ? "pass" : "fail";
 const report = {
-  schema: "local-studio-system-one-one-turn-acceptance-v1",
+  schema: "local-studio-system-one-one-turn-acceptance-v2",
   verdict,
   generated_at: new Date().toISOString(),
   local_studio_head: gitHead(localStudioRoot),
@@ -413,6 +470,12 @@ const report = {
   command_outcome: command?.outcome ?? null,
   status_before: snapshotStatus(beforeStatus),
   status_after: snapshotStatus(afterStatus),
+  replay_control: {
+    command_outcome: replayCommand?.outcome ?? null,
+    status_before: snapshotStatus(replayBefore?.status),
+    status_after: snapshotStatus(replayAfter?.status),
+    evidence_rows: replayForReceipt,
+  },
   assertions,
   evidence_rows: evidenceRows,
 };
