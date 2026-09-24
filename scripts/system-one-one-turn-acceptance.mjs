@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -166,6 +167,21 @@ const snapshotSha256 = required(args, "snapshot-sha256");
 const python = args.get("python") ?? "python3";
 const workId = args.get("work-id") ?? "acceptance-local-studio-pr3";
 const timeoutMs = Number(args.get("timeout-ms") ?? 180000);
+const producerMode = args.get("producer") ?? "fixture";
+const snapshotPath = args.get("snapshot") ? realpathSync(args.get("snapshot")) : null;
+const harnessrouterRepo = args.get("harnessrouter-repo")
+  ? realpathSync(args.get("harnessrouter-repo"))
+  : null;
+const harnessrouterPython = args.get("harnessrouter-python") ?? python;
+
+if (!["fixture", "harnessrouter-script"].includes(producerMode)) {
+  throw new Error("--producer must be fixture or harnessrouter-script");
+}
+if (producerMode === "harnessrouter-script" && (!snapshotPath || !harnessrouterRepo)) {
+  throw new Error(
+    "--producer harnessrouter-script requires --snapshot and --harnessrouter-repo",
+  );
+}
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
   throw new Error("--snapshot-sha256 must be exactly 64 lowercase hex characters");
@@ -243,71 +259,142 @@ if (existsSync(fixturePath)) {
 }
 
 const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-const producerArgs = [
-  "-m",
-  "my_jev.uhp_fixture",
-  "--decision",
-  "examples/uhp/decision.json",
-  "--fleet-resolution",
-  "examples/uhp/fleet-resolution.json",
-  "--fleet-handle-map",
-  "examples/uhp/fleet-handles.json",
-  "--provenance",
-  "examples/uhp/provenance.json",
-  "--receipt-id",
-  receiptId,
-  "--response-id",
-  responseId,
-  "--session-id",
-  uhpSessionId,
-  "--harness-id",
-  "chrn_system_one",
-  "--model",
-  "recorded/jev",
-  "--work-id",
-  workId,
-  "--consumer-session-id",
-  piSessionId,
-  "--project-cwd",
-  projectCwd,
-  "--snapshot-sha256",
-  snapshotSha256,
-  "--observed-at",
-  now,
-  "--created-at",
-  now,
-  "--ttl-seconds",
-  "600",
-  "--task-focus",
-  canary,
-  "--context-priority",
-  "current-pr",
-  "--context-priority",
-  "latest-handoff",
-  "--output",
-  fixturePath,
-];
+let producer;
+let producerEvidence;
+let expectedProducerModel;
 
-const producer = spawnSync(python, producerArgs, {
-  cwd: myJevRepo,
-  encoding: "utf8",
-  env: {
-    ...process.env,
-    PYTHONPATH: [
-      join(myJevRepo, "src"),
-      process.env.PYTHONPATH ?? "",
-    ]
-      .filter(Boolean)
-      .join(process.platform === "win32" ? ";" : ":"),
-  },
-});
-if (producer.status !== 0) {
-  throw new Error(
-    `my-jev fixture generation failed (exit ${producer.status}):\n${producer.stderr || producer.stdout}`,
-  );
+if (producerMode === "fixture") {
+  const producerArgs = [
+    "-m",
+    "my_jev.uhp_fixture",
+    "--decision",
+    "examples/uhp/decision.json",
+    "--fleet-resolution",
+    "examples/uhp/fleet-resolution.json",
+    "--fleet-handle-map",
+    "examples/uhp/fleet-handles.json",
+    "--provenance",
+    "examples/uhp/provenance.json",
+    "--receipt-id",
+    receiptId,
+    "--response-id",
+    responseId,
+    "--session-id",
+    uhpSessionId,
+    "--harness-id",
+    "chrn_system_one",
+    "--model",
+    "recorded/jev",
+    "--work-id",
+    workId,
+    "--consumer-session-id",
+    piSessionId,
+    "--project-cwd",
+    projectCwd,
+    "--snapshot-sha256",
+    snapshotSha256,
+    "--observed-at",
+    now,
+    "--created-at",
+    now,
+    "--ttl-seconds",
+    "600",
+    "--task-focus",
+    canary,
+    "--context-priority",
+    "current-pr",
+    "--context-priority",
+    "latest-handoff",
+    "--output",
+    fixturePath,
+  ];
+  producer = spawnSync(python, producerArgs, {
+    cwd: myJevRepo,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PYTHONPATH: [
+        join(myJevRepo, "src"),
+        process.env.PYTHONPATH ?? "",
+      ]
+        .filter(Boolean)
+        .join(process.platform === "win32" ? ";" : ":"),
+    },
+  });
+  if (producer.status !== 0) {
+    throw new Error(
+      `my-jev fixture generation failed (exit ${producer.status}):\n${producer.stderr || producer.stdout}`,
+    );
+  }
+  producerEvidence = parseProducerEvidence(producer.stderr);
+  expectedProducerModel = "recorded/jev";
+} else {
+  const producerDir = join(systemOneDir, "producer", responseId);
+  const producerArgs = [
+    "-m",
+    "my_jev.harnessrouter_probe",
+    "--harnessrouter-repo",
+    harnessrouterRepo,
+    "--harnessrouter-python",
+    harnessrouterPython,
+    "--snapshot",
+    snapshotPath,
+    "--output-dir",
+    producerDir,
+    "--consumer-session-id",
+    piSessionId,
+    "--project-cwd",
+    projectCwd,
+    "--receipt-id",
+    receiptId,
+    "--response-id",
+    responseId,
+    "--uhp-session-id",
+    uhpSessionId,
+    "--harness-id",
+    "chrn_system_one",
+    "--ttl-seconds",
+    "600",
+    "--task-focus",
+    canary,
+  ];
+  producer = spawnSync(python, producerArgs, {
+    cwd: myJevRepo,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PYTHONPATH: [
+        join(myJevRepo, "src"),
+        process.env.PYTHONPATH ?? "",
+      ]
+        .filter(Boolean)
+        .join(process.platform === "win32" ? ";" : ":"),
+    },
+  });
+  if (producer.status !== 0) {
+    throw new Error(
+      `my-jev HarnessRouter probe failed (exit ${producer.status}):\n${producer.stderr || producer.stdout}`,
+    );
+  }
+  producerEvidence = parseProducerEvidence(producer.stdout);
+  if (producerEvidence?.verdict !== "pass") {
+    throw new Error(
+      `HarnessRouter producer evidence did not pass: ${JSON.stringify(producerEvidence)}`,
+    );
+  }
+  if (producerEvidence?.snapshot_sha256 !== snapshotSha256) {
+    throw new Error(
+      `HarnessRouter producer snapshot mismatch: expected ${snapshotSha256}, got ${producerEvidence?.snapshot_sha256 ?? "null"}`,
+    );
+  }
+  const producedResponse = producerEvidence?.stored_response;
+  if (!producedResponse || !existsSync(producedResponse)) {
+    throw new Error("HarnessRouter producer did not expose its stored UHP response");
+  }
+  copyFileSync(producedResponse, fixturePath);
+  expectedProducerModel = "script/s1";
 }
 
-const producerEvidence = parseProducerEvidence(producer.stderr);
 const fixtureRaw = readFileSync(fixturePath, "utf8");
 const fixtureRawSha256 = sha256(fixtureRaw);
 const ledgerStart = readLedger(ledgerPath).length;
@@ -386,7 +473,7 @@ const assertions = {
     beforeStatus.piSessionId === piSessionId &&
     afterStatus.piSessionId === piSessionId,
   producer_model_is_not_coding_model:
-    consumed?.served_model === "recorded/jev" && consumed?.served_model !== modelId,
+    consumed?.served_model === expectedProducerModel && consumed?.served_model !== modelId,
   producer_profile_hash_matches_consumer:
     producerEvidence?.profile_sha256 != null &&
     producerEvidence.profile_sha256 === consumed?.receipt_sha256,
@@ -453,6 +540,7 @@ const report = {
   generated_at: new Date().toISOString(),
   local_studio_head: gitHead(localStudioRoot),
   my_jev_head: gitHead(myJevRepo),
+  producer_mode: producerMode,
   base_url: baseUrl.toString(),
   runtime_session_id: runtimeSessionId,
   pi_session_id: piSessionId,
