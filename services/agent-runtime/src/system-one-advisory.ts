@@ -795,6 +795,12 @@ export function createSystemOneAdvisoryPromptExtension(
         advisory_marker_present: payloadText?.includes(MARKER) ?? false,
         response_id_present: payloadText?.includes(evidence.advisory.responseId) ?? false,
         receipt_id_present: payloadText?.includes(evidence.advisory.receiptId) ?? false,
+        task_focus_present:
+          evidence.advisory.taskFocus == null
+            ? null
+            : payloadText?.includes(evidence.advisory.taskFocus) ?? false,
+        task_focus_sha256:
+          evidence.advisory.taskFocus == null ? null : sha256(evidence.advisory.taskFocus),
         provider_model: providerModel,
         expected_backend_model_id: evidence.backendModelId,
         provider_model_matches_expected:
