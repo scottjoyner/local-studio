@@ -393,7 +393,10 @@ function consumeMarkerPath(context: ConsumerContext, responseSha256: string): st
   return path.join(resolveDataDir(), "system-one", "consumed", `${key}.json`);
 }
 
-function markConsumed(context: ConsumerContext, advisory: SystemOneAdvisory): boolean {
+function markConsumed(
+  context: ConsumerContext,
+  advisory: SystemOneAdvisory,
+): "marked" | "replay" | "error" {
   try {
     const filepath = consumeMarkerPath(context, advisory.responseSha256);
     mkdirSync(path.dirname(filepath), { recursive: true });
@@ -409,9 +412,17 @@ function markConsumed(context: ConsumerContext, advisory: SystemOneAdvisory): bo
       }),
       { encoding: "utf8", flag: "wx" },
     );
-    return true;
-  } catch {
-    return false;
+    return "marked";
+  } catch (error) {
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "EEXIST"
+    ) {
+      return "replay";
+    }
+    return "error";
   }
 }
 
@@ -467,13 +478,14 @@ export function appendSystemOneAdvisoryPrompt(
   }
   if (result.outcome !== "consumed") return null;
   const advisory = result.advisory;
-  if (!markConsumed(context, advisory)) {
+  const marker = markConsumed(context, advisory);
+  if (marker !== "marked") {
     appendLedger({
       at: new Date().toISOString(),
       outcome: "ignored",
       pi_session_id: context.piSessionId,
       cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
-      reason: "replay_already_consumed",
+      reason: marker === "replay" ? "replay_already_consumed" : "replay_marker_error",
       response_id: advisory.responseId,
       receipt_id: advisory.receiptId,
       response_sha256: advisory.responseSha256,
