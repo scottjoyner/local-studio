@@ -447,17 +447,17 @@ function appendLedger(entry: JsonRecord): boolean {
   }
 }
 
-function consumeMarkerPath(context: ConsumerContext, responseSha256: string): string {
-  const key = sha256(`${context.piSessionId}\0${responseSha256}`);
+function consumeMarkerPath(context: ConsumerContext, receiptId: string): string {
+  const key = sha256(`${context.piSessionId}\0${receiptId}`);
   return path.join(resolveDataDir(), "system-one", "consumed", `${key}.json`);
 }
 
 function markConsumed(
   context: ConsumerContext,
   advisory: SystemOneAdvisory,
-): "marked" | "replay" | "error" {
+): "marked" | "replay" | "conflict" | "error" {
+  const filepath = consumeMarkerPath(context, advisory.receiptId);
   try {
-    const filepath = consumeMarkerPath(context, advisory.responseSha256);
     mkdirSync(path.dirname(filepath), { recursive: true });
     writeFileSync(
       filepath,
@@ -479,7 +479,16 @@ function markConsumed(
       "code" in error &&
       (error as { code?: unknown }).code === "EEXIST"
     ) {
-      return "replay";
+      try {
+        const existing = JSON.parse(readFileSync(filepath, "utf8")) as JsonRecord;
+        return existing.response_id === advisory.responseId &&
+          existing.response_sha256 === advisory.responseSha256 &&
+          existing.receipt_sha256 === advisory.receiptSha256
+          ? "replay"
+          : "conflict";
+      } catch {
+        return "conflict";
+      }
     }
     return "error";
   }
@@ -544,7 +553,12 @@ function consumeSystemOneAdvisoryPrompt(
       outcome: "ignored",
       pi_session_id: context.piSessionId,
       cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
-      reason: marker === "replay" ? "replay_already_consumed" : "replay_marker_error",
+      reason:
+        marker === "replay"
+          ? "replay_already_consumed"
+          : marker === "conflict"
+            ? "receipt_id_conflict"
+            : "replay_marker_error",
       response_id: advisory.responseId,
       receipt_id: advisory.receiptId,
       response_sha256: advisory.responseSha256,
