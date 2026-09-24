@@ -39,14 +39,14 @@ try {
       modelFile: {
         type: "file",
         reference: "/models/Ternary-Bonsai-2-27B-PQ2_0.gguf",
-        sizeBytes: 7210000000,
-        sha256: "a".repeat(64),
+        sizeBytes: 7206168928,
+        sha256: "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1",
       },
       projectorFile: {
         type: "file",
         reference: "/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf",
-        sizeBytes: 629000000,
-        sha256: "b".repeat(64),
+        sizeBytes: 629246976,
+        sha256: "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903",
       },
       engineRef: "PrismML-Eng/llama.cpp@9a9394a895b96003ca842a6041cb28ac49a108f7",
       engineFile: {
@@ -319,6 +319,33 @@ try {
     { encoding: "utf8" },
   );
   assert(tampered.status !== 0, "renderer accepted a forged artifact receipt");
+
+  const wrongPublishedHashPath = join(temp, "wrong-published-hash.json");
+  writeFileSync(
+    wrongPublishedHashPath,
+    JSON.stringify({
+      ...accepted,
+      target: {
+        ...accepted.target,
+        modelFile: { ...accepted.target.modelFile, sha256: "f".repeat(64) },
+      },
+    }),
+  );
+  const wrongPublishedHash = spawnSync(
+    process.execPath,
+    [
+      renderer,
+      "--evidence",
+      wrongPublishedHashPath,
+      "--output-dir",
+      join(temp, "wrong-published-hash-out"),
+    ],
+    { encoding: "utf8" },
+  );
+  assert(
+    wrongPublishedHash.status !== 0,
+    "renderer accepted a well-formed but non-authoritative Bonsai artifact hash",
+  );
 
   const override = spawnSync(
     process.execPath,
