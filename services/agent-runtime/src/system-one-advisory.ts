@@ -71,7 +71,7 @@ export type SystemOneAdvisory = {
   expiresAt: string;
   binding: {
     consumer: string;
-    workId: string;
+    sourceWorkId: string;
     consumerSessionId: string;
     projectFingerprint: string;
     snapshotSha256: string;
@@ -413,7 +413,7 @@ function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.no
       expiresAt,
       binding: {
         consumer,
-        workId,
+        sourceWorkId: workId,
         consumerSessionId,
         projectFingerprint,
         snapshotSha256,
