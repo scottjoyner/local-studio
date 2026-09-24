@@ -69,10 +69,20 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
-function runVerifier(verifier, report) {
-  return spawnSync(process.execPath, [verifier, "--report", report], {
-    encoding: "utf8",
-  });
+function runVerifier(verifier, report, localHead, myJevHead) {
+  return spawnSync(
+    process.execPath,
+    [
+      verifier,
+      "--report",
+      report,
+      "--expected-local-head",
+      localHead,
+      "--expected-my-jev-head",
+      myJevHead,
+    ],
+    { encoding: "utf8" },
+  );
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -447,7 +457,7 @@ try {
   const reportPath = join(acceptanceDir, responseId + ".json");
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  const valid = runVerifier(verifier, reportPath);
+  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
   if (valid.status !== 0) {
     throw new Error(
       "Expected synthetic HarnessRouter bundle to pass:\n" +
@@ -465,7 +475,7 @@ try {
     JSON.stringify(sourceSnapshot, null, 2) + "\n",
     "utf8",
   );
-  const tampered = runVerifier(verifier, reportPath);
+  const tampered = runVerifier(verifier, reportPath, localStudioHead, myJevHead);
   if (tampered.status === 0) {
     throw new Error("Expected source snapshot tampering to fail");
   }
