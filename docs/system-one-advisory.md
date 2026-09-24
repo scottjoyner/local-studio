@@ -338,12 +338,18 @@ node scripts/system-one-one-turn-acceptance.mjs \
   --snapshot-sha256 '<exact heartbeat snapshot sha256>'
 ```
 
-The harness deliberately uses two phases:
+The harness deliberately uses three phases:
 
 1. a bootstrap prompt with no advisory present, solely to establish the canonical
    Pi session id that the receipt must bind to
-2. exactly one read-only acceptance turn after generating the bound my-jev
-   fixture into `system-one/sessions/<pi-session-id>.json`
+2. exactly one read-only **influenced acceptance turn** after generating the
+   bound my-jev fixture into `system-one/sessions/<pi-session-id>.json`
+3. one read-only replay control that re-presents that exact receipt and must log
+   `replay_already_consumed` without producing any consumed, boundary,
+   provider-request, or completed advisory-influence evidence rows
+
+The replay control is not a second influenced turn; its purpose is to prove the
+same semantic receipt cannot affect another turn.
 
 It refuses to proceed when `system-one/latest.json` exists or the bootstrap
 produces any System-One ledger record, so unrelated advice cannot contaminate
