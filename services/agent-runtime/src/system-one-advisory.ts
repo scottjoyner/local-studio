@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveDataDir } from "./data-dir";
 
 const PROFILE = "hermes-system-one-heartbeat-v1";
 const UHP_VERSION = "2026-09-12";
+const CONTRACT_SHA256 = "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
 const MODES = new Set(["chat", "create_tasks", "act", "clarify", "cancel", "abstain"]);
 const REQUIRED_AUTHORITY_FALSE = [
   "dispatch_allowed",
@@ -23,11 +30,18 @@ const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 const DEFAULT_MAX_TTL_SECONDS = 15 * 60;
 const MAX_CONFIGURABLE_TTL_SECONDS = 60 * 60;
 const MARKER = "Local Studio System-One advisory:";
+const SHA256_RE = /^[0-9a-f]{64}$/;
 
 type JsonRecord = Record<string, unknown>;
 
+type ConsumerContext = {
+  piSessionId: string;
+  cwd: string;
+};
+
 export type SystemOneAdvisory = {
   uhpVersion: string;
+  contractSha256: string;
   responseId: string;
   uhpSessionId: string;
   harnessId: string;
@@ -36,8 +50,17 @@ export type SystemOneAdvisory = {
   receiptId: string;
   observedAt: string;
   expiresAt: string;
+  binding: {
+    consumer: string;
+    workId: string;
+    consumerSessionId: string;
+    projectFingerprint: string;
+    snapshotSha256: string;
+  };
   mode: string;
   modeConfidence: number;
+  policyDisposition: string | null;
+  approvalRecommended: boolean | null;
   taskFocus: string | null;
   contextPriority: string[];
   fleetPriority: Array<{ handle: string; score: number; reason: string | null }>;
@@ -80,6 +103,30 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const item = record(value);
+  if (!item) return value;
+  return Object.fromEntries(
+    Object.keys(item)
+      .sort()
+      .map((key) => [key, canonicalize(item[key])]),
+  );
+}
+
+function canonicalSha256(value: unknown): string {
+  return sha256(JSON.stringify(canonicalize(value)));
+}
+
+function normalizedProjectPath(cwd: string): string {
+  const normalized = path.resolve(cwd).replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+export function systemOneProjectFingerprint(cwd: string): string {
+  return sha256(normalizedProjectPath(cwd));
+}
+
 function advisoryPaths(piSessionId: string): string[] {
   const explicit = process.env.LOCAL_STUDIO_SYSTEM_ONE_ADVISORY_PATH?.trim();
   const root = path.join(resolveDataDir(), "system-one");
@@ -103,7 +150,7 @@ function readCandidate(piSessionId: string): { raw: string; filepath: string } |
   return null;
 }
 
-function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
+function validateResponse(raw: string, context: ConsumerContext, nowMs = Date.now()): ReadResult {
   const responseSha256 = sha256(raw);
   let parsed: unknown;
   try {
@@ -159,9 +206,10 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   if (!profile) return { outcome: "ignored", reason: "missing_advisory_profile", responseSha256 };
   if (profile.profile !== PROFILE)
     return { outcome: "ignored", reason: "unsupported_advisory_profile", responseSha256 };
-
   if (profile.uhp_version !== UHP_VERSION)
     return { outcome: "ignored", reason: "unsupported_uhp_version", responseSha256 };
+  if (profile.contract_sha256 !== CONTRACT_SHA256)
+    return { outcome: "ignored", reason: "contract_mismatch", responseSha256 };
 
   const receiptId = boundedString(profile.receipt_id, 200);
   if (!receiptId)
@@ -185,6 +233,24 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   if (expiresMs - observedMs > maxTtlSeconds() * 1000)
     return { outcome: "ignored", reason: "ttl_too_long", responseSha256 };
 
+  const binding = record(profile.binding);
+  if (!binding) return { outcome: "ignored", reason: "missing_binding", responseSha256 };
+  const consumer = boundedString(binding.consumer, 64);
+  const workId = boundedString(binding.work_id, 128);
+  const consumerSessionId = boundedString(binding.consumer_session_id, 128);
+  const projectFingerprint = boundedString(binding.project_fingerprint, 64);
+  const snapshotSha256 = boundedString(binding.snapshot_sha256, 64);
+  if (!consumer || !workId || !consumerSessionId || !projectFingerprint || !snapshotSha256)
+    return { outcome: "ignored", reason: "invalid_binding", responseSha256 };
+  if (!SHA256_RE.test(projectFingerprint) || !SHA256_RE.test(snapshotSha256))
+    return { outcome: "ignored", reason: "invalid_binding_hash", responseSha256 };
+  if (consumer !== "local-studio")
+    return { outcome: "ignored", reason: "binding_consumer_mismatch", responseSha256 };
+  if (consumerSessionId !== context.piSessionId)
+    return { outcome: "ignored", reason: "binding_session_mismatch", responseSha256 };
+  if (projectFingerprint !== systemOneProjectFingerprint(context.cwd))
+    return { outcome: "ignored", reason: "binding_project_mismatch", responseSha256 };
+
   const authority = record(profile.authority);
   if (!authority)
     return { outcome: "ignored", reason: "missing_authority", responseSha256 };
@@ -204,6 +270,19 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   const modeConfidence = finiteUnit(advice.mode_confidence);
   if (modeConfidence === null)
     return { outcome: "ignored", reason: "invalid_mode_confidence", responseSha256 };
+
+  const policyDisposition =
+    advice.policy_disposition == null ? null : boundedString(advice.policy_disposition, 64);
+  if (advice.policy_disposition != null && !policyDisposition)
+    return { outcome: "ignored", reason: "invalid_policy_disposition", responseSha256 };
+  const approvalRecommended =
+    advice.approval_recommended == null
+      ? null
+      : typeof advice.approval_recommended === "boolean"
+        ? advice.approval_recommended
+        : undefined;
+  if (approvalRecommended === undefined)
+    return { outcome: "ignored", reason: "invalid_approval_recommended", responseSha256 };
 
   let taskFocus: string | null = null;
   if (advice.task_focus != null) {
@@ -249,9 +328,11 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   }
 
   const provenance = record(profile.provenance) ?? {};
-  for (const value of Object.values(provenance)) {
+  for (const [key, value] of Object.entries(provenance)) {
     if (value != null && (typeof value !== "string" || value.length > 300))
       return { outcome: "ignored", reason: "invalid_provenance", responseSha256 };
+    if (key === "trace_sha256" && value != null && !SHA256_RE.test(String(value)))
+      return { outcome: "ignored", reason: "invalid_trace_sha256", responseSha256 };
   }
 
   const previousResponseId =
@@ -265,6 +346,7 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
     outcome: "consumed",
     advisory: {
       uhpVersion: UHP_VERSION,
+      contractSha256: CONTRACT_SHA256,
       responseId,
       uhpSessionId,
       harnessId,
@@ -273,14 +355,23 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
       receiptId,
       observedAt,
       expiresAt,
+      binding: {
+        consumer,
+        workId,
+        consumerSessionId,
+        projectFingerprint,
+        snapshotSha256,
+      },
       mode,
       modeConfidence,
+      policyDisposition,
+      approvalRecommended,
       taskFocus,
       contextPriority,
       fleetPriority,
       provenance,
       responseSha256,
-      receiptSha256: sha256(JSON.stringify(profile)),
+      receiptSha256: canonicalSha256(profile),
     },
   };
 }
@@ -297,18 +388,56 @@ function appendLedger(entry: JsonRecord): void {
   } catch {}
 }
 
+function consumeMarkerPath(context: ConsumerContext, responseSha256: string): string {
+  const key = sha256(`${context.piSessionId}\0${responseSha256}`);
+  return path.join(resolveDataDir(), "system-one", "consumed", `${key}.json`);
+}
+
+function markConsumed(context: ConsumerContext, advisory: SystemOneAdvisory): boolean {
+  try {
+    const filepath = consumeMarkerPath(context, advisory.responseSha256);
+    mkdirSync(path.dirname(filepath), { recursive: true });
+    writeFileSync(
+      filepath,
+      JSON.stringify({
+        at: new Date().toISOString(),
+        pi_session_id: context.piSessionId,
+        receipt_id: advisory.receiptId,
+        response_id: advisory.responseId,
+        response_sha256: advisory.responseSha256,
+        receipt_sha256: advisory.receiptSha256,
+      }),
+      { encoding: "utf8", flag: "wx" },
+    );
+    return true;
+  } catch (error) {
+    return !(
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "EEXIST"
+    )
+      ? false
+      : false;
+  }
+}
+
 function advisorySection(advisory: SystemOneAdvisory): string {
   const payload = {
     uhp_version: advisory.uhpVersion,
+    contract_sha256: advisory.contractSha256,
     response_id: advisory.responseId,
     uhp_session_id: advisory.uhpSessionId,
     harness_id: advisory.harnessId,
     receipt_id: advisory.receiptId,
     observed_at: advisory.observedAt,
     expires_at: advisory.expiresAt,
+    binding: advisory.binding,
     served_model: advisory.model,
     mode: advisory.mode,
     mode_confidence: advisory.modeConfidence,
+    policy_disposition: advisory.policyDisposition,
+    approval_recommended: advisory.approvalRecommended,
     task_focus: advisory.taskFocus,
     context_priority: advisory.contextPriority,
     fleet_priority: advisory.fleetPriority,
@@ -326,17 +455,18 @@ function advisorySection(advisory: SystemOneAdvisory): string {
 
 export function appendSystemOneAdvisoryPrompt(
   systemPrompt: string,
-  piSessionId: string,
+  context: ConsumerContext,
 ): string | null {
   if (systemPrompt.includes(MARKER)) return null;
-  const candidate = readCandidate(piSessionId);
+  const candidate = readCandidate(context.piSessionId);
   if (!candidate) return null;
-  const result = validateResponse(candidate.raw);
+  const result = validateResponse(candidate.raw, context);
   if (result.outcome === "ignored") {
     appendLedger({
       at: new Date().toISOString(),
       outcome: "ignored",
-      pi_session_id: piSessionId,
+      pi_session_id: context.piSessionId,
+      cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
       reason: result.reason,
       response_sha256: result.responseSha256 ?? null,
     });
@@ -344,33 +474,57 @@ export function appendSystemOneAdvisoryPrompt(
   }
   if (result.outcome !== "consumed") return null;
   const advisory = result.advisory;
+  if (!markConsumed(context, advisory)) {
+    appendLedger({
+      at: new Date().toISOString(),
+      outcome: "ignored",
+      pi_session_id: context.piSessionId,
+      cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
+      reason: "replay_already_consumed",
+      response_id: advisory.responseId,
+      receipt_id: advisory.receiptId,
+      response_sha256: advisory.responseSha256,
+      receipt_sha256: advisory.receiptSha256,
+    });
+    return null;
+  }
   appendLedger({
     at: new Date().toISOString(),
     outcome: "consumed",
-    pi_session_id: piSessionId,
+    pi_session_id: context.piSessionId,
+    cwd_fingerprint: systemOneProjectFingerprint(context.cwd),
     uhp_version: advisory.uhpVersion,
+    contract_sha256: advisory.contractSha256,
     response_id: advisory.responseId,
     uhp_session_id: advisory.uhpSessionId,
     harness_id: advisory.harnessId,
     previous_response_id: advisory.previousResponseId,
     receipt_id: advisory.receiptId,
+    binding: advisory.binding,
     response_sha256: advisory.responseSha256,
     receipt_sha256: advisory.receiptSha256,
     served_model: advisory.model,
     mode: advisory.mode,
     mode_confidence: advisory.modeConfidence,
+    policy_disposition: advisory.policyDisposition,
+    approval_recommended: advisory.approvalRecommended,
     fleet_handles: advisory.fleetPriority.map((item) => item.handle),
     authority: Object.fromEntries(REQUIRED_AUTHORITY_FALSE.map((key) => [key, false])),
   });
   return `${systemPrompt.trimEnd()}\n\n${advisorySection(advisory)}`;
 }
 
-export function createSystemOneAdvisoryPromptExtension(getPiSessionId: () => string | null) {
+export function createSystemOneAdvisoryPromptExtension(
+  getContext: () => { piSessionId: string | null; cwd: string },
+) {
   return (pi: ExtensionAPI): void => {
     pi.on("before_agent_start", (event) => {
-      const piSessionId = getPiSessionId();
-      if (!piSessionId) return {};
-      const next = appendSystemOneAdvisoryPrompt(event.systemPrompt, piSessionId);
+      const context = getContext();
+      if (!context.piSessionId || !context.cwd) return {};
+      const next = appendSystemOneAdvisoryPrompt(event.systemPrompt, {
+        piSessionId: context.piSessionId,
+        cwd: context.cwd,
+      });
       return next ? { systemPrompt: next } : {};
     });
   };
