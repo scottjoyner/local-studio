@@ -5,12 +5,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveDataDir } from "./data-dir";
 
 const PROFILE = "hermes-system-one-heartbeat-v1";
+const UHP_VERSION = "2026-09-12";
 const MODES = new Set(["chat", "create_tasks", "act", "clarify", "cancel", "abstain"]);
 const REQUIRED_AUTHORITY_FALSE = [
   "dispatch_allowed",
   "approval_granted",
   "claim_acquired",
-  "tool_invoked",
+  "mutation_allowed",
   "routing_authority_changed",
 ] as const;
 const MAX_CONTEXT_PRIORITY = 16;
@@ -26,6 +27,7 @@ const MARKER = "Local Studio System-One advisory:";
 type JsonRecord = Record<string, unknown>;
 
 export type SystemOneAdvisory = {
+  uhpVersion: string;
   responseId: string;
   uhpSessionId: string;
   harnessId: string;
@@ -114,8 +116,19 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   if (!response) return { outcome: "ignored", reason: "response_not_object", responseSha256 };
   if (response.object !== "response")
     return { outcome: "ignored", reason: "not_uhp_response", responseSha256 };
-  if (response.status !== "completed")
+  if (response.status !== "completed") {
+    const incomplete = record(response.incomplete_details);
+    if (
+      response.status === "incomplete" &&
+      incomplete &&
+      (incomplete.handoff != null ||
+        incomplete.reason === "escalation_requested" ||
+        incomplete.reason === "no_confident_action")
+    ) {
+      return { outcome: "ignored", reason: "system_one_handoff", responseSha256 };
+    }
     return { outcome: "ignored", reason: "response_not_completed", responseSha256 };
+  }
 
   const responseId = boundedString(response.id, 200);
   if (!responseId?.startsWith("resp_"))
@@ -146,6 +159,9 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   if (!profile) return { outcome: "ignored", reason: "missing_advisory_profile", responseSha256 };
   if (profile.profile !== PROFILE)
     return { outcome: "ignored", reason: "unsupported_advisory_profile", responseSha256 };
+
+  if (profile.uhp_version !== UHP_VERSION)
+    return { outcome: "ignored", reason: "unsupported_uhp_version", responseSha256 };
 
   const receiptId = boundedString(profile.receipt_id, 200);
   if (!receiptId)
@@ -248,6 +264,7 @@ function validateResponse(raw: string, nowMs = Date.now()): ReadResult {
   return {
     outcome: "consumed",
     advisory: {
+      uhpVersion: UHP_VERSION,
       responseId,
       uhpSessionId,
       harnessId,
@@ -282,6 +299,8 @@ function appendLedger(entry: JsonRecord): void {
 
 function advisorySection(advisory: SystemOneAdvisory): string {
   const payload = {
+    uhp_version: advisory.uhpVersion,
+    uhp_version: advisory.uhpVersion,
     response_id: advisory.responseId,
     uhp_session_id: advisory.uhpSessionId,
     harness_id: advisory.harnessId,
