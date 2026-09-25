@@ -699,8 +699,12 @@ try {
   const originalManifestSignatureBytes = readFileSync(manifestSignaturePath);
 
   // One-byte manifest tamper must fail at the producer-manifest signature.
-  const manifestTampered = Buffer.from(originalManifestBytes);
-  manifestTampered[manifestTampered.length - 2] ^= 1;
+  const manifestTampered = Buffer.from(
+    originalManifestBytes
+      .toString("utf8")
+      .replace(responseId, "resp_harnessrouter_offline_verifieq"),
+    "utf8",
+  );
   writeFileSync(manifestPath, manifestTampered);
   const manifestTamperResult = runVerifier(
     verifier,
