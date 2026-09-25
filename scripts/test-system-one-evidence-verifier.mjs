@@ -52,6 +52,8 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
+let defaultTrustedKeysPath = null;
+
 function runVerifier(
   verifier,
   report,
@@ -59,7 +61,7 @@ function runVerifier(
   myJevHead,
   evidencePublicKeyPath = null,
   expectedEvidenceKeyId = null,
-  trustedKeysPath = null,
+  trustedKeysPath = defaultTrustedKeysPath,
 ) {
   const args = [
     verifier,
@@ -463,28 +465,6 @@ try {
     "utf8",
   );
 
-  const signedValid = runVerifier(
-    verifier,
-    reportPath,
-    localStudioHead,
-    myJevHead,
-    evidencePublicKeyPath,
-    expectedEvidenceKeyId,
-  );
-  if (signedValid.status !== 0) {
-    throw new Error(
-      "Expected signed acceptance evidence to pass:\n" +
-        (signedValid.stderr || signedValid.stdout),
-    );
-  }
-  const signedVerified = JSON.parse(signedValid.stdout);
-  if (
-    signedVerified.verdict !== "pass" ||
-    signedVerified.assertions.evidence_signature_cryptographically_valid !== true
-  ) {
-    throw new Error("Verifier did not authenticate signed acceptance evidence");
-  }
-
   const evidenceTrustStorePath = join(root, "evidence-trusted-keys.json");
   const evidenceTrustEntry = {
     role: "consumer_evidence",
@@ -507,20 +487,28 @@ try {
     ) + "\n",
     { mode: 0o600 },
   );
-  const trustedSignedValid = runVerifier(
+  defaultTrustedKeysPath = evidenceTrustStorePath;
+
+  const signedValid = runVerifier(
     verifier,
     reportPath,
     localStudioHead,
     myJevHead,
     evidencePublicKeyPath,
     expectedEvidenceKeyId,
-    evidenceTrustStorePath,
   );
-  if (trustedSignedValid.status !== 0) {
+  if (signedValid.status !== 0) {
     throw new Error(
-      "Expected active evidence trust-store entry to pass:\n" +
-        (trustedSignedValid.stderr || trustedSignedValid.stdout),
+      "Expected signed acceptance evidence to pass:\n" +
+        (signedValid.stderr || signedValid.stdout),
     );
+  }
+  const signedVerified = JSON.parse(signedValid.stdout);
+  if (
+    signedVerified.verdict !== "pass" ||
+    signedVerified.assertions.evidence_signature_cryptographically_valid !== true
+  ) {
+    throw new Error("Verifier did not authenticate signed acceptance evidence");
   }
 
   writeFileSync(
@@ -555,6 +543,30 @@ try {
   const revokedEvidenceResult = JSON.parse(revokedEvidenceKey.stdout);
   if (revokedEvidenceResult.assertions.evidence_trust_store_allows_key !== false) {
     throw new Error("Verifier did not attribute failure to evidence trust policy");
+  }
+
+  writeFileSync(
+    evidenceTrustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [evidenceTrustEntry],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  const restoredSignedValid = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+  );
+  if (restoredSignedValid.status !== 0) {
+    throw new Error("Restored active evidence trust entry did not recover PASS");
   }
 
   writeFileSync(
