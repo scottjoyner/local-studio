@@ -24,6 +24,7 @@ import {
   type ComposerSkillRef,
 } from "../../../../shared/agent/composer-refs";
 import { piResourceDiagnostics, piRuntimeManager } from "../pi-runtime";
+import { AGENT_RUNTIME_PROVENANCE } from "../runtime-provenance";
 import { isAgentSettledEvent } from "../pi-runtime-state";
 import type { LoggedPiEvent, PiAgentSession, PiAgentStatus } from "../pi-runtime-types";
 import { listSessions } from "../sessions-store";
@@ -396,7 +397,12 @@ export function handleRuntimeStatus(request: Request): Response {
   const after = Number(searchParams.get("after") ?? 0);
   const resolved = piRuntimeManager.findSessionForLookup(sessionId, piSessionId);
   if (!resolved) {
-    return Response.json({ sessionId, status: null, events: [] });
+    return Response.json({
+      sessionId,
+      status: null,
+      events: [],
+      runtimeProvenance: AGENT_RUNTIME_PROVENANCE,
+    });
   }
   const afterSeq = replayAfterCursor(
     Number.isFinite(after) ? after : 0,
@@ -406,6 +412,7 @@ export function handleRuntimeStatus(request: Request): Response {
     sessionId: resolved.sessionId,
     status: resolved.session.status,
     events: resolved.session.getEventsAfter(afterSeq),
+    runtimeProvenance: AGENT_RUNTIME_PROVENANCE,
   });
 }
 

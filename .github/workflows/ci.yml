@@ -42,6 +42,20 @@ jobs:
         run: node scripts/project.mjs validate-contracts
       - name: Barrel/dir sibling structure gate
         run: node scripts/project.mjs validate-structure
+      - name: System-One evidence verifier gate
+        run: |
+          node --check scripts/system-one-python-launch.mjs
+          node --check scripts/system-one-one-turn-acceptance.mjs
+          node --check scripts/verify-system-one-evidence.mjs
+          node --check scripts/test-system-one-evidence-verifier.mjs
+          node --check scripts/test-system-one-evidence-verifier-harnessrouter.mjs
+          node --check scripts/test-system-one-python-launch.mjs
+          node --check scripts/system-one-trusted-keys.mjs
+          node --check scripts/test-system-one-trusted-keys.mjs
+          node scripts/test-system-one-evidence-verifier.mjs
+          node scripts/test-system-one-evidence-verifier-harnessrouter.mjs
+          node scripts/test-system-one-python-launch.mjs
+          node scripts/test-system-one-trusted-keys.mjs
 
   controller:
     if: github.event_name != 'schedule'
