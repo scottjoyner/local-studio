@@ -595,6 +595,11 @@ if (producerMode === "fixture") {
     if (!producerEvidence?.producer_signature?.key_id) {
       throw new Error("HarnessRouter producer signature evidence is incomplete");
     }
+    if (producerEvidence.producer_signature.key_id !== expectedProducerKeyId) {
+      throw new Error(
+        `HarnessRouter producer key mismatch: expected ${expectedProducerKeyId}, got ${producerEvidence.producer_signature.key_id}`,
+      );
+    }
     copyFileSync(producedSignature, fixtureSignaturePath);
   }
   expectedProducerModel = "script/s1";
