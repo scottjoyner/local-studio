@@ -636,7 +636,6 @@ function verifyProducer(
   const trace = readJson(tracePath);
   const stored = readJson(storedResponsePath);
   const sourceSnapshot = readJson(sourceSnapshotPath);
-  const producerManifest = producerManifestPresent ? readJson(manifestPath) : null;
   const producerManifestSignatureVerification = producerManifestPresent
     ? verifyDetachedProducerManifestSignature(
         manifestPath,
@@ -644,6 +643,16 @@ function verifyProducer(
         verificationKey,
       )
     : null;
+  let producerManifest = null;
+  let producerManifestParseValid = !producerManifestPresent;
+  if (producerManifestPresent && producerManifestSignatureVerification?.valid === true) {
+    try {
+      producerManifest = readJson(manifestPath);
+      producerManifestParseValid = true;
+    } catch {
+      producerManifestParseValid = false;
+    }
+  }
   const profile = stored?.metadata?.hermes_system_one;
   const recommendSteps = Array.isArray(trace?.steps)
     ? trace.steps.filter((step) => step?.action === "recommend")
@@ -727,6 +736,8 @@ function verifyProducer(
           producerManifestSignatureVerification?.valid === true &&
           producerManifestSignatureVerification?.keyId === expectedProducerKeyId
         ),
+      producer_manifest_parse_valid:
+        !producerManifestPresent || producerManifestParseValid === true,
       producer_manifest_report_binding:
         !producerManifestPresent ||
         (
