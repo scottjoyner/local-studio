@@ -6,6 +6,7 @@ import {
   createPublicKey,
   randomBytes,
   sign as signSignature,
+  verify as verifySignature,
 } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
@@ -103,6 +104,308 @@ function signAcceptanceReport(reportRaw, signingKey) {
     preimage_sha256: sha256(preimage),
     signature_b64: signSignature(null, preimage, signingKey.key).toString("base64"),
   };
+}
+
+function exactKeys(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+}
+
+function readRetainedRegularFile(root, filepath, label, maxBytes = 2 * 1024 * 1024) {
+  const stat = lstatSync(filepath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > maxBytes) {
+    throw new Error(`${label} must be a bounded regular non-symlink file`);
+  }
+  const canonicalRoot = realpathSync(root);
+  const canonicalFile = realpathSync(filepath);
+  if (
+    canonicalFile !== canonicalRoot &&
+    !canonicalFile.startsWith(canonicalRoot + "/") &&
+    !canonicalFile.startsWith(canonicalRoot + "\\")
+  ) {
+    throw new Error(`${label} escapes the producer evidence directory`);
+  }
+  return readFileSync(filepath);
+}
+
+function loadProducerVerificationKey(filepath) {
+  const raw = readRetainedRegularFile(
+    dirname(filepath),
+    filepath,
+    "Producer public key",
+    16 * 1024,
+  );
+  const stat = lstatSync(filepath);
+  if (process.platform !== "win32" && (stat.mode & 0o022) !== 0) {
+    throw new Error("Producer public key must not be group/other writable");
+  }
+  const key = createPublicKey(raw);
+  if (key.asymmetricKeyType !== "ed25519") {
+    throw new Error("Producer public key must be Ed25519");
+  }
+  const der = key.export({ type: "spki", format: "der" });
+  return {
+    key,
+    keyId: `ed25519:${sha256(der)}`,
+    publicKeySha256: sha256(der),
+  };
+}
+
+function verifyProducerDetachedSignature({
+  payloadBytes,
+  signatureBytes,
+  verificationKey,
+  expectedKeyId,
+  schema,
+  domain,
+  hashField,
+  label,
+}) {
+  let envelope;
+  try {
+    envelope = JSON.parse(signatureBytes.toString("utf8"));
+  } catch {
+    throw new Error(`${label} signature is not valid JSON`);
+  }
+  const expectedKeys = [
+    "schema",
+    "scheme",
+    "domain",
+    "key_id",
+    hashField,
+    "preimage_sha256",
+    "signature_b64",
+  ];
+  if (!exactKeys(envelope, expectedKeys)) {
+    throw new Error(`${label} signature shape mismatch`);
+  }
+  if (
+    envelope.schema !== schema ||
+    envelope.scheme !== "ed25519" ||
+    envelope.domain !== domain
+  ) {
+    throw new Error(`${label} signature metadata mismatch`);
+  }
+  if (
+    envelope.key_id !== expectedKeyId ||
+    verificationKey.keyId !== expectedKeyId
+  ) {
+    throw new Error(`${label} signature key id mismatch`);
+  }
+  const payloadSha = sha256(payloadBytes);
+  if (envelope[hashField] !== payloadSha) {
+    throw new Error(`${label} signature payload hash mismatch`);
+  }
+  const preimage = Buffer.concat([
+    Buffer.from(domain + "\0", "utf8"),
+    payloadBytes,
+  ]);
+  if (envelope.preimage_sha256 !== sha256(preimage)) {
+    throw new Error(`${label} signature preimage hash mismatch`);
+  }
+  const encoded =
+    typeof envelope.signature_b64 === "string" ? envelope.signature_b64 : "";
+  if (
+    encoded.length === 0 ||
+    encoded.length > 128 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    throw new Error(`${label} signature encoding invalid`);
+  }
+  const signature = Buffer.from(encoded, "base64");
+  if (
+    signature.length !== 64 ||
+    signature.toString("base64") !== encoded ||
+    !verifySignature(null, preimage, verificationKey.key, signature)
+  ) {
+    throw new Error(`${label} signature verification failed`);
+  }
+  return envelope;
+}
+
+function requireProducerManifestSemantics({
+  manifest,
+  response,
+  expected,
+  producerEvidence,
+  producerDir,
+}) {
+  const topKeys = [
+    "schema",
+    "response_id",
+    "receipt_id",
+    "consumer_session_id",
+    "project_fingerprint",
+    "snapshot_sha256",
+    "stored_response_sha256",
+    "stored_response_signature_sha256",
+    "producer_key_id",
+    "source_snapshot_raw_sha256",
+    "source_snapshot_canonical_sha256",
+    "recommendation_sha256",
+    "trace_sha256",
+    "systemone_config_sha256",
+    "my_jev_head",
+    "harnessrouter_head",
+    "harnessrouter_driver_git_blob_sha1",
+    "systemone_provider_git_blob_sha1",
+    "systemone_package_manifest_sha256",
+    "producer_python",
+    "heartbeat_mcp_python",
+    "sanitized_environment",
+    "compiled_at",
+    "receipt_expires_at",
+    "authority",
+  ];
+  if (!exactKeys(manifest, topKeys)) {
+    throw new Error("Producer evidence manifest shape mismatch");
+  }
+  if (manifest.schema !== "hermes-system-one-producer-evidence-manifest-v1") {
+    throw new Error("Producer evidence manifest schema mismatch");
+  }
+  const profile = response?.metadata?.hermes_system_one;
+  if (
+    manifest.response_id !== expected.responseId ||
+    manifest.receipt_id !== expected.receiptId ||
+    manifest.consumer_session_id !== expected.piSessionId ||
+    manifest.project_fingerprint !== expected.projectFingerprint ||
+    manifest.snapshot_sha256 !== expected.snapshotSha256 ||
+    manifest.producer_key_id !== expected.producerKeyId ||
+    response?.id !== expected.responseId ||
+    profile?.receipt_id !== expected.receiptId ||
+    profile?.binding?.consumer_session_id !== expected.piSessionId ||
+    profile?.binding?.project_fingerprint !== expected.projectFingerprint ||
+    profile?.binding?.snapshot_sha256 !== expected.snapshotSha256
+  ) {
+    throw new Error("Producer evidence manifest transaction binding mismatch");
+  }
+  if (
+    manifest.stored_response_sha256 !== expected.responseSha256 ||
+    manifest.stored_response_signature_sha256 !== expected.responseSignatureSha256
+  ) {
+    throw new Error("Producer evidence manifest response hash mismatch");
+  }
+
+  const artifactHashes = {
+    source_snapshot_raw_sha256: sha256(
+      readRetainedRegularFile(
+        producerDir,
+        join(producerDir, "source-heartbeat-snapshot.json"),
+        "Producer source snapshot",
+      ),
+    ),
+    recommendation_sha256: sha256(
+      readRetainedRegularFile(
+        producerDir,
+        join(producerDir, "workspace", "hermes-system-one-recommendation.json"),
+        "Producer recommendation",
+      ),
+    ),
+    trace_sha256: sha256(
+      readRetainedRegularFile(
+        producerDir,
+        join(producerDir, "workspace", "trace.json"),
+        "Producer trace",
+      ),
+    ),
+    systemone_config_sha256: sha256(
+      readRetainedRegularFile(
+        producerDir,
+        join(producerDir, "package", "config.yaml"),
+        "Producer System-One config",
+      ),
+    ),
+  };
+  for (const [field, observed] of Object.entries(artifactHashes)) {
+    if (manifest[field] !== observed) {
+      throw new Error(`Producer evidence manifest artifact hash mismatch: ${field}`);
+    }
+  }
+  if (manifest.source_snapshot_canonical_sha256 !== expected.snapshotSha256) {
+    throw new Error("Producer evidence manifest canonical snapshot hash mismatch");
+  }
+  if (
+    manifest.my_jev_head !== expected.myJevHead ||
+    manifest.harnessrouter_head !== producerEvidence?.harnessrouter_head ||
+    manifest.harnessrouter_driver_git_blob_sha1 !==
+      producerEvidence?.harnessrouter_driver_git_blob_sha1 ||
+    manifest.systemone_provider_git_blob_sha1 !==
+      producerEvidence?.systemone_harness?.provider_git_blob_sha1 ||
+    manifest.systemone_package_manifest_sha256 !==
+      producerEvidence?.systemone_harness?.package_manifest_sha256
+  ) {
+    throw new Error("Producer evidence manifest implementation provenance mismatch");
+  }
+
+  for (const [field, observed] of [
+    ["producer_python", producerEvidence?.harnessrouter_python],
+    ["heartbeat_mcp_python", producerEvidence?.heartbeat_mcp_python],
+  ]) {
+    const value = manifest[field];
+    if (
+      !exactKeys(value, [
+        "executable_sha256",
+        "isolated",
+        "ignore_environment",
+        "no_site",
+      ]) ||
+      value.executable_sha256 !== observed?.executable_sha256 ||
+      value.isolated !== true ||
+      value.ignore_environment !== true ||
+      value.no_site !== true
+    ) {
+      throw new Error(`Producer evidence manifest Python provenance mismatch: ${field}`);
+    }
+  }
+
+  if (
+    !exactKeys(manifest.sanitized_environment, [
+      "removed_keys",
+      "provider_credentials_present",
+      "startup_injection_present",
+    ]) ||
+    manifest.sanitized_environment.provider_credentials_present !== false ||
+    manifest.sanitized_environment.startup_injection_present !== false ||
+    !Array.isArray(manifest.sanitized_environment.removed_keys)
+  ) {
+    throw new Error("Producer evidence manifest sanitized-environment mismatch");
+  }
+  const expectedRemoved = [
+    ...(producerEvidence?.sanitized_environment_removed_keys ?? []),
+    ...(producerEvidence?.heartbeat_mcp_sanitized_environment_removed_keys ?? []),
+  ].filter((value, index, values) => values.indexOf(value) === index).sort();
+  const observedRemoved = [...manifest.sanitized_environment.removed_keys].sort();
+  if (!sameStrings(expectedRemoved, observedRemoved)) {
+    throw new Error("Producer evidence manifest removed-environment keys mismatch");
+  }
+
+  if (
+    !exactKeys(manifest.authority, [
+      "dispatch_allowed",
+      "approval_granted",
+      "claim_acquired",
+      "mutation_allowed",
+      "routing_authority_changed",
+    ]) ||
+    !allAuthorityFalse(manifest.authority)
+  ) {
+    throw new Error("Producer evidence manifest authority widened");
+  }
+  if (
+    typeof manifest.compiled_at !== "string" ||
+    typeof manifest.receipt_expires_at !== "string" ||
+    !Number.isFinite(Date.parse(manifest.compiled_at)) ||
+    !Number.isFinite(Date.parse(manifest.receipt_expires_at)) ||
+    manifest.receipt_expires_at !== profile?.expires_at ||
+    Date.parse(manifest.receipt_expires_at) <= Date.parse(manifest.compiled_at)
+  ) {
+    throw new Error("Producer evidence manifest timestamp mismatch");
+  }
 }
 
 function gitHead(cwd) {
@@ -319,11 +622,14 @@ const harnessrouterRepo = args.get("harnessrouter-repo")
   : null;
 const harnessrouterPython = args.get("harnessrouter-python") ?? python;
 const producerSigningKey = args.get("producer-signing-key")
-  ? realpathSync(args.get("producer-signing-key"))
+  ? resolve(args.get("producer-signing-key"))
+  : null;
+const producerPublicKeyPath = args.get("producer-public-key")
+  ? resolve(args.get("producer-public-key"))
   : null;
 const expectedProducerKeyId = args.get("expected-producer-key-id")?.trim() || null;
 const evidenceSigningKeyPath = args.get("evidence-signing-key")
-  ? realpathSync(args.get("evidence-signing-key"))
+  ? resolve(args.get("evidence-signing-key"))
   : null;
 const expectedEvidenceKeyId = args.get("expected-evidence-key-id")?.trim() || null;
 const localStudioHeadBefore = requireCleanGitCheckout(
@@ -350,9 +656,12 @@ if (producerMode === "harnessrouter-script") {
 if (producerSigningKey && producerMode !== "harnessrouter-script") {
   throw new Error("--producer-signing-key is supported only with harnessrouter-script");
 }
-if (Boolean(producerSigningKey) !== Boolean(expectedProducerKeyId)) {
+if (
+  Boolean(producerSigningKey) !== Boolean(expectedProducerKeyId) ||
+  Boolean(producerSigningKey) !== Boolean(producerPublicKeyPath)
+) {
   throw new Error(
-    "--producer-signing-key and --expected-producer-key-id must be supplied together",
+    "--producer-signing-key, --producer-public-key, and --expected-producer-key-id must be supplied together",
   );
 }
 if (
@@ -475,6 +784,10 @@ const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 let producer;
 let producerEvidence;
 let expectedProducerModel;
+let producerManifestSha256 = null;
+let producerManifestSignatureSha256 = null;
+let producerManifestKeyId = null;
+let producerManifestVerified = false;
 
 if (producerMode === "fixture") {
   const producerArgs = [
@@ -583,25 +896,127 @@ if (producerMode === "fixture") {
       `HarnessRouter producer snapshot mismatch: expected ${snapshotSha256}, got ${producerEvidence?.snapshot_sha256 ?? "null"}`,
     );
   }
-  const producedResponse = producerEvidence?.stored_response;
-  if (!producedResponse || !existsSync(producedResponse)) {
-    throw new Error("HarnessRouter producer did not expose its stored UHP response");
+  const producedResponse = join(producerDir, "stored-uhp-response.json");
+  if (!existsSync(producedResponse)) {
+    throw new Error("HarnessRouter producer did not retain its stored UHP response");
   }
-  copyFileSync(producedResponse, fixturePath);
+
   if (producerSigningKey) {
-    const producedSignature = producerEvidence?.producer_signature_file;
-    if (!producedSignature || !existsSync(producedSignature)) {
-      throw new Error("HarnessRouter producer did not expose its detached signature file");
+    const producedSignature = join(
+      producerDir,
+      "stored-uhp-response.json.sig.json",
+    );
+    const manifestPath = join(producerDir, "producer-evidence-manifest.json");
+    const manifestSignaturePath = join(
+      producerDir,
+      "producer-evidence-manifest.json.sig.json",
+    );
+    for (const [filepath, label] of [
+      [producedResponse, "Producer stored response"],
+      [producedSignature, "Producer response signature"],
+      [manifestPath, "Producer evidence manifest"],
+      [manifestSignaturePath, "Producer evidence manifest signature"],
+    ]) {
+      if (!existsSync(filepath)) {
+        throw new Error(`${label} is missing`);
+      }
     }
-    if (!producerEvidence?.producer_signature?.key_id) {
-      throw new Error("HarnessRouter producer signature evidence is incomplete");
-    }
-    if (producerEvidence.producer_signature.key_id !== expectedProducerKeyId) {
+
+    const verificationKey = loadProducerVerificationKey(producerPublicKeyPath);
+    if (verificationKey.keyId !== expectedProducerKeyId) {
       throw new Error(
-        `HarnessRouter producer key mismatch: expected ${expectedProducerKeyId}, got ${producerEvidence.producer_signature.key_id}`,
+        `Producer public key mismatch: expected ${expectedProducerKeyId}, got ${verificationKey.keyId}`,
       );
     }
+
+    const responseBytes = readRetainedRegularFile(
+      producerDir,
+      producedResponse,
+      "Producer stored response",
+    );
+    const responseSignatureBytes = readRetainedRegularFile(
+      producerDir,
+      producedSignature,
+      "Producer response signature",
+    );
+    const responseSignature = verifyProducerDetachedSignature({
+      payloadBytes: responseBytes,
+      signatureBytes: responseSignatureBytes,
+      verificationKey,
+      expectedKeyId: expectedProducerKeyId,
+      schema: "hermes-system-one-detached-signature-v1",
+      domain: "hermes-system-one-uhp-response-bytes-ed25519-v1",
+      hashField: "response_sha256",
+      label: "Producer response",
+    });
+
+    const manifestBytes = readRetainedRegularFile(
+      producerDir,
+      manifestPath,
+      "Producer evidence manifest",
+    );
+    const manifestSignatureBytes = readRetainedRegularFile(
+      producerDir,
+      manifestSignaturePath,
+      "Producer evidence manifest signature",
+    );
+    const manifestSignature = verifyProducerDetachedSignature({
+      payloadBytes: manifestBytes,
+      signatureBytes: manifestSignatureBytes,
+      verificationKey,
+      expectedKeyId: expectedProducerKeyId,
+      schema: "hermes-system-one-producer-evidence-signature-v1",
+      domain: "hermes-system-one-producer-evidence-manifest-ed25519-v1",
+      hashField: "manifest_sha256",
+      label: "Producer evidence manifest",
+    });
+
+    let response;
+    let manifest;
+    try {
+      response = JSON.parse(responseBytes.toString("utf8"));
+      manifest = JSON.parse(manifestBytes.toString("utf8"));
+    } catch {
+      throw new Error("Signed producer response/manifest JSON could not be parsed");
+    }
+    const responseSha256 = sha256(responseBytes);
+    const responseSignatureSha256 = sha256(responseSignatureBytes);
+    requireProducerManifestSemantics({
+      manifest,
+      response,
+      expected: {
+        responseId,
+        receiptId,
+        piSessionId,
+        projectFingerprint: canonicalProjectFingerprint(projectCwd),
+        snapshotSha256,
+        producerKeyId: expectedProducerKeyId,
+        responseSha256,
+        responseSignatureSha256,
+        myJevHead: myJevHeadBefore,
+      },
+      producerEvidence,
+      producerDir,
+    });
+
+    if (
+      responseSignature.key_id !== manifestSignature.key_id ||
+      manifest.producer_key_id !== responseSignature.key_id
+    ) {
+      throw new Error("Producer response and manifest signatures use different identities");
+    }
+
+    producerManifestSha256 = sha256(manifestBytes);
+    producerManifestSignatureSha256 = sha256(manifestSignatureBytes);
+    producerManifestKeyId = manifestSignature.key_id;
+    producerManifestVerified = true;
+
+    // Installation happens only after both signatures and the full manifest
+    // provenance graph have passed preflight.
+    copyFileSync(producedResponse, fixturePath);
     copyFileSync(producedSignature, fixtureSignaturePath);
+  } else {
+    copyFileSync(producedResponse, fixturePath);
   }
   expectedProducerModel = "script/s1";
 }
@@ -729,6 +1144,14 @@ const assertions = {
       producerEvidence?.producer_signature?.key_id === expectedProducerKeyId &&
       consumed?.signature_key_id === expectedProducerKeyId
     ),
+  producer_manifest_preflight_verified:
+    !producerSigningKey ||
+    (
+      producerManifestVerified === true &&
+      /^[0-9a-f]{64}$/.test(producerManifestSha256 ?? "") &&
+      /^[0-9a-f]{64}$/.test(producerManifestSignatureSha256 ?? "") &&
+      producerManifestKeyId === expectedProducerKeyId
+    ),
   contract_hash_matches_expected:
     consumed?.contract_sha256 ===
     "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
@@ -846,6 +1269,10 @@ const report = {
   expected_producer_key_id: expectedProducerKeyId,
   fixture_signature_path: fixtureSignatureSha256 ? fixtureSignaturePath : null,
   fixture_signature_sha256: fixtureSignatureSha256,
+  producer_evidence_manifest_sha256: producerManifestSha256,
+  producer_evidence_manifest_signature_sha256: producerManifestSignatureSha256,
+  producer_evidence_manifest_key_id: producerManifestKeyId,
+  producer_evidence_manifest_verified: producerManifestVerified,
   consume_marker_sha256: sha256(markerRaw),
   ledger_checkpoint: {
     bytes: ledgerRaw.length,
