@@ -2,6 +2,7 @@
 
 import {
   createHash,
+  createPublicKey,
   generateKeyPairSync,
   sign,
 } from "node:crypto";
@@ -83,7 +84,16 @@ function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = nul
     "--expected-my-jev-head",
     myJevHead,
   ];
-  if (publicKeyPath) args.push("--producer-public-key", publicKeyPath);
+  if (publicKeyPath) {
+    const key = createPublicKey(readFileSync(publicKeyPath));
+    const der = key.export({ type: "spki", format: "der" });
+    args.push(
+      "--producer-public-key",
+      publicKeyPath,
+      "--expected-producer-key-id",
+      "ed25519:" + sha256(der),
+    );
+  }
   return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
 
@@ -527,6 +537,7 @@ try {
     project_fingerprint: projectFingerprint,
     fixture_raw_sha256: fixtureSha,
     producer_signature_required: true,
+    expected_producer_key_id: signatureEnvelope.key_id,
     fixture_signature_path: fixtureSignaturePath,
     fixture_signature_sha256: sha256(readFileSync(fixtureSignaturePath)),
     consume_marker_sha256: sha256(readFileSync(markerPath)),
@@ -553,6 +564,25 @@ try {
   };
   const reportPath = join(acceptanceDir, responseId + ".json");
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+
+  const unanchored = spawnSync(
+    process.execPath,
+    [
+      verifier,
+      "--report",
+      reportPath,
+      "--expected-local-head",
+      localStudioHead,
+      "--expected-my-jev-head",
+      myJevHead,
+      "--producer-public-key",
+      publicKeyPath,
+    ],
+    { encoding: "utf8" },
+  );
+  if (unanchored.status === 0) {
+    throw new Error("Expected signed evidence without an external key-id anchor to fail");
+  }
 
   const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead, publicKeyPath);
   if (valid.status !== 0) {
