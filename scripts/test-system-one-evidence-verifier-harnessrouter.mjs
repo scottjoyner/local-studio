@@ -7,6 +7,7 @@ import {
   sign,
 } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -421,7 +422,9 @@ try {
       },
       signature_verified: true,
       signature_key_id: signatureEnvelope.key_id,
-      signature_public_key_sha256: sha256(readFileSync(publicKeyPath)),
+      signature_public_key_sha256: sha256(
+        publicKey.export({ type: "spki", format: "der" }),
+      ),
       signature_preimage_sha256: signatureEnvelope.preimage_sha256,
       authority: AUTHORITY,
     },
@@ -679,6 +682,21 @@ try {
     rejected.assertions.producer_source_snapshot_canonical_hash_matches !== false
   ) {
     throw new Error("Verifier did not identify retained source snapshot tampering");
+  }
+
+  if (process.platform !== "win32") {
+    chmodSync(publicKeyPath, 0o666);
+    const mutableKey = runVerifier(
+      verifier,
+      reportPath,
+      localStudioHead,
+      myJevHead,
+      publicKeyPath,
+    );
+    if (mutableKey.status === 0) {
+      throw new Error("Expected group/other-writable producer key to fail");
+    }
+    chmodSync(publicKeyPath, 0o644);
   }
 
   process.stdout.write(
