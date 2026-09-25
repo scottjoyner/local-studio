@@ -87,7 +87,14 @@ function parseVerifierOutput(run) {
   }
 }
 
-function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = null) {
+function runVerifier(
+  verifier,
+  report,
+  localHead,
+  myJevHead,
+  publicKeyPath = null,
+  trustedKeysPath = null,
+) {
   const args = [
     verifier,
     "--report",
@@ -106,6 +113,9 @@ function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = nul
       "--expected-producer-key-id",
       "ed25519:" + sha256(der),
     );
+  }
+  if (trustedKeysPath) {
+    args.push("--trusted-keys", trustedKeysPath);
   }
   return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
@@ -702,6 +712,96 @@ try {
   if (verified.verdict !== "pass") {
     throw new Error("HarnessRouter-mode verifier returned non-pass");
   }
+
+  const trustStorePath = join(root, "trusted-keys.json");
+  const trustedProducerEntry = {
+    role: "producer",
+    key_id: signatureEnvelope.key_id,
+    public_key_sha256: sha256(keyDer),
+    active_from: "2026-09-24T00:00:00Z",
+    retire_after: null,
+    revoked_at: null,
+    note: "synthetic producer trust anchor",
+  };
+  writeFileSync(
+    trustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [trustedProducerEntry],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  chmodSync(trustStorePath, 0o600);
+
+  const trustedValid = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+    trustStorePath,
+  );
+  if (trustedValid.status !== 0) {
+    throw new Error(
+      "Expected active producer trust-store entry to pass:\n" +
+        (trustedValid.stderr || trustedValid.stdout),
+    );
+  }
+
+  writeFileSync(
+    trustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [
+          {
+            ...trustedProducerEntry,
+            revoked_at: "2026-09-25T00:00:00Z",
+          },
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  chmodSync(trustStorePath, 0o600);
+  const revoked = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+    trustStorePath,
+  );
+  if (revoked.status === 0) {
+    throw new Error("Expected revoked producer trust-store entry to fail");
+  }
+  const revokedResult = parseVerifierOutput(revoked);
+  if (
+    revokedResult &&
+    revokedResult.assertions?.producer_trust_store_allows_key !== false
+  ) {
+    throw new Error("Verifier did not attribute failure to producer trust policy");
+  }
+
+  writeFileSync(
+    trustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [trustedProducerEntry],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  chmodSync(trustStorePath, 0o600);
 
   const originalManifestBytes = readFileSync(manifestPath);
   const originalManifestSignatureBytes = readFileSync(manifestSignaturePath);
