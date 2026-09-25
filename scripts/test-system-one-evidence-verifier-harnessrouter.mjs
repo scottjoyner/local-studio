@@ -87,13 +87,15 @@ function parseVerifierOutput(run) {
   }
 }
 
+let defaultTrustedKeysPath = null;
+
 function runVerifier(
   verifier,
   report,
   localHead,
   myJevHead,
   publicKeyPath = null,
-  trustedKeysPath = null,
+  trustedKeysPath = defaultTrustedKeysPath,
 ) {
   const args = [
     verifier,
@@ -682,37 +684,6 @@ try {
   const reportPath = join(acceptanceDir, responseId + ".json");
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
 
-  const unanchored = spawnSync(
-    process.execPath,
-    [
-      verifier,
-      "--report",
-      reportPath,
-      "--expected-local-head",
-      localStudioHead,
-      "--expected-my-jev-head",
-      myJevHead,
-      "--producer-public-key",
-      publicKeyPath,
-    ],
-    { encoding: "utf8" },
-  );
-  if (unanchored.status === 0) {
-    throw new Error("Expected signed evidence without an external key-id anchor to fail");
-  }
-
-  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead, publicKeyPath);
-  if (valid.status !== 0) {
-    throw new Error(
-      "Expected synthetic HarnessRouter bundle to pass:\n" +
-        (valid.stderr || valid.stdout),
-    );
-  }
-  const verified = JSON.parse(valid.stdout);
-  if (verified.verdict !== "pass") {
-    throw new Error("HarnessRouter-mode verifier returned non-pass");
-  }
-
   const trustStorePath = join(root, "trusted-keys.json");
   const trustedProducerEntry = {
     role: "producer",
@@ -736,20 +707,39 @@ try {
     { mode: 0o600 },
   );
   chmodSync(trustStorePath, 0o600);
+  defaultTrustedKeysPath = trustStorePath;
 
-  const trustedValid = runVerifier(
-    verifier,
-    reportPath,
-    localStudioHead,
-    myJevHead,
-    publicKeyPath,
-    trustStorePath,
+  const unanchored = spawnSync(
+    process.execPath,
+    [
+      verifier,
+      "--report",
+      reportPath,
+      "--expected-local-head",
+      localStudioHead,
+      "--expected-my-jev-head",
+      myJevHead,
+      "--producer-public-key",
+      publicKeyPath,
+      "--trusted-keys",
+      trustStorePath,
+    ],
+    { encoding: "utf8" },
   );
-  if (trustedValid.status !== 0) {
+  if (unanchored.status === 0) {
+    throw new Error("Expected signed evidence without an external key-id anchor to fail");
+  }
+
+  const valid = runVerifier(verifier, reportPath, localStudioHead, myJevHead, publicKeyPath);
+  if (valid.status !== 0) {
     throw new Error(
-      "Expected active producer trust-store entry to pass:\n" +
-        (trustedValid.stderr || trustedValid.stdout),
+      "Expected synthetic HarnessRouter bundle to pass:\n" +
+        (valid.stderr || valid.stdout),
     );
+  }
+  const verified = JSON.parse(valid.stdout);
+  if (verified.verdict !== "pass") {
+    throw new Error("HarnessRouter-mode verifier returned non-pass");
   }
 
   writeFileSync(
@@ -802,6 +792,17 @@ try {
     { mode: 0o600 },
   );
   chmodSync(trustStorePath, 0o600);
+
+  const restoredTrusted = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+  );
+  if (restoredTrusted.status !== 0) {
+    throw new Error("Restored active producer trust entry did not recover PASS");
+  }
 
   const originalManifestBytes = readFileSync(manifestPath);
   const originalManifestSignatureBytes = readFileSync(manifestSignaturePath);
