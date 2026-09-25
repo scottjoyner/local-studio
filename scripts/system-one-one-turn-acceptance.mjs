@@ -367,6 +367,15 @@ if (evidenceSigningKey && evidenceSigningKey.keyId !== expectedEvidenceKeyId) {
     "Evidence signing key does not match --expected-evidence-key-id",
   );
 }
+if (
+  expectedProducerKeyId &&
+  expectedEvidenceKeyId &&
+  expectedProducerKeyId === expectedEvidenceKeyId
+) {
+  throw new Error(
+    "Producer and consumer-evidence signatures must use distinct Ed25519 keys",
+  );
+}
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
   throw new Error("--snapshot-sha256 must be exactly 64 lowercase hex characters");
