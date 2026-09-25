@@ -59,6 +59,7 @@ function runVerifier(
   myJevHead,
   evidencePublicKeyPath = null,
   expectedEvidenceKeyId = null,
+  trustedKeysPath = null,
 ) {
   const args = [
     verifier,
@@ -77,6 +78,7 @@ function runVerifier(
       expectedEvidenceKeyId,
     );
   }
+  if (trustedKeysPath) args.push("--trusted-keys", trustedKeysPath);
   return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
 
@@ -266,6 +268,7 @@ try {
   const report = {
     schema: "local-studio-system-one-one-turn-acceptance-v2",
     verdict: "pass",
+    generated_at: "2026-09-24T12:00:30Z",
     local_studio_head: localStudioHead,
     my_jev_head: myJevHead,
     runtime_provenance: runtimeProvenance,
@@ -480,6 +483,78 @@ try {
     signedVerified.assertions.evidence_signature_cryptographically_valid !== true
   ) {
     throw new Error("Verifier did not authenticate signed acceptance evidence");
+  }
+
+  const evidenceTrustStorePath = join(root, "evidence-trusted-keys.json");
+  const evidenceTrustEntry = {
+    role: "consumer_evidence",
+    key_id: expectedEvidenceKeyId,
+    public_key_sha256: sha256(evidenceDer),
+    active_from: "2026-09-24T00:00:00Z",
+    retire_after: null,
+    revoked_at: null,
+    note: "synthetic consumer evidence trust anchor",
+  };
+  writeFileSync(
+    evidenceTrustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [evidenceTrustEntry],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  const trustedSignedValid = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+    evidenceTrustStorePath,
+  );
+  if (trustedSignedValid.status !== 0) {
+    throw new Error(
+      "Expected active evidence trust-store entry to pass:\n" +
+        (trustedSignedValid.stderr || trustedSignedValid.stdout),
+    );
+  }
+
+  writeFileSync(
+    evidenceTrustStorePath,
+    JSON.stringify(
+      {
+        schema: "system-one-trusted-keys-v1",
+        keys: [
+          {
+            ...evidenceTrustEntry,
+            revoked_at: "2026-09-25T00:00:00Z",
+          },
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  const revokedEvidenceKey = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+    evidenceTrustStorePath,
+  );
+  if (revokedEvidenceKey.status === 0) {
+    throw new Error("Expected revoked consumer-evidence key to fail");
+  }
+  const revokedEvidenceResult = JSON.parse(revokedEvidenceKey.stdout);
+  if (revokedEvidenceResult.assertions.evidence_trust_store_allows_key !== false) {
+    throw new Error("Verifier did not attribute failure to evidence trust policy");
   }
 
   writeFileSync(
