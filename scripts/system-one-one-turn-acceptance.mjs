@@ -264,6 +264,7 @@ const harnessrouterPython = args.get("harnessrouter-python") ?? python;
 const producerSigningKey = args.get("producer-signing-key")
   ? realpathSync(args.get("producer-signing-key"))
   : null;
+const expectedProducerKeyId = args.get("expected-producer-key-id")?.trim() || null;
 const localStudioHeadBefore = requireCleanGitCheckout(
   localStudioRoot,
   "Local Studio",
@@ -280,6 +281,17 @@ if (producerMode === "harnessrouter-script" && (!snapshotPath || !harnessrouterR
 }
 if (producerSigningKey && producerMode !== "harnessrouter-script") {
   throw new Error("--producer-signing-key is supported only with harnessrouter-script");
+}
+if (Boolean(producerSigningKey) !== Boolean(expectedProducerKeyId)) {
+  throw new Error(
+    "--producer-signing-key and --expected-producer-key-id must be supplied together",
+  );
+}
+if (
+  expectedProducerKeyId &&
+  !/^ed25519:[0-9a-f]{64}$/.test(expectedProducerKeyId)
+) {
+  throw new Error("--expected-producer-key-id must be ed25519:<64 lowercase hex>");
 }
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
@@ -631,6 +643,12 @@ const assertions = {
         producerEvidence?.producer_signature?.preimage_sha256 &&
       producerEvidence?.producer_signature?.response_sha256 === fixtureRawSha256
     ),
+  producer_signature_key_matches_expected:
+    !producerSigningKey ||
+    (
+      producerEvidence?.producer_signature?.key_id === expectedProducerKeyId &&
+      consumed?.signature_key_id === expectedProducerKeyId
+    ),
   contract_hash_matches_expected:
     consumed?.contract_sha256 ===
     "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f",
@@ -743,6 +761,7 @@ const report = {
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureRawSha256,
   producer_signature_required: Boolean(producerSigningKey),
+  expected_producer_key_id: expectedProducerKeyId,
   fixture_signature_path: fixtureSignatureSha256 ? fixtureSignaturePath : null,
   fixture_signature_sha256: fixtureSignatureSha256,
   consume_marker_sha256: sha256(markerRaw),
