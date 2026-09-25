@@ -326,7 +326,6 @@ const evidenceSigningKeyPath = args.get("evidence-signing-key")
   ? realpathSync(args.get("evidence-signing-key"))
   : null;
 const expectedEvidenceKeyId = args.get("expected-evidence-key-id")?.trim() || null;
-const evidenceSigningKey = loadEvidenceSigningKey(evidenceSigningKeyPath);
 const localStudioHeadBefore = requireCleanGitCheckout(
   localStudioRoot,
   "Local Studio",
@@ -362,7 +361,7 @@ if (
 ) {
   throw new Error("--expected-producer-key-id must be ed25519:<64 lowercase hex>");
 }
-if (Boolean(evidenceSigningKey) !== Boolean(expectedEvidenceKeyId)) {
+if (Boolean(evidenceSigningKeyPath) !== Boolean(expectedEvidenceKeyId)) {
   throw new Error(
     "--evidence-signing-key and --expected-evidence-key-id must be supplied together",
   );
@@ -372,11 +371,6 @@ if (
   !/^ed25519:[0-9a-f]{64}$/.test(expectedEvidenceKeyId)
 ) {
   throw new Error("--expected-evidence-key-id must be ed25519:<64 lowercase hex>");
-}
-if (evidenceSigningKey && evidenceSigningKey.keyId !== expectedEvidenceKeyId) {
-  throw new Error(
-    "Evidence signing key does not match --expected-evidence-key-id",
-  );
 }
 if (
   expectedProducerKeyId &&
@@ -827,7 +821,7 @@ const report = {
   runtime_provenance_sha256: sha256(JSON.stringify(runtimeProvenance)),
   source_checkouts_clean: true,
   source_heads_stable: true,
-  evidence_signature_required: Boolean(evidenceSigningKey),
+  evidence_signature_required: Boolean(evidenceSigningKeyPath),
   expected_evidence_key_id: expectedEvidenceKeyId,
   producer_mode: producerMode,
   base_url: baseUrl.toString(),
@@ -873,7 +867,15 @@ writeFileSync(reportPath, reportRaw, "utf8");
 
 let evidenceSignaturePath = null;
 let evidenceSignature = null;
-if (evidenceSigningKey) {
+if (evidenceSigningKeyPath) {
+  // Load the consumer evidence private key only after every runtime interaction
+  // has completed, minimizing the time secret key material exists in process.
+  const evidenceSigningKey = loadEvidenceSigningKey(evidenceSigningKeyPath);
+  if (evidenceSigningKey.keyId !== expectedEvidenceKeyId) {
+    throw new Error(
+      "Evidence signing key does not match --expected-evidence-key-id",
+    );
+  }
   evidenceSignature = signAcceptanceReport(reportRaw, evidenceSigningKey);
   evidenceSignaturePath = `${reportPath}.sig.json`;
   writeFileSync(
