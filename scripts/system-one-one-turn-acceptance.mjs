@@ -431,6 +431,11 @@ if (!piSessionId) {
 if (!piSessionId) {
   throw new Error("Runtime did not expose a canonical Pi session id after bootstrap");
 }
+if (!/^[a-zA-Z0-9_.:-]{1,128}$/.test(piSessionId)) {
+  throw new Error(
+    "Runtime exposed a Pi session id that is unsafe for session-scoped evidence",
+  );
+}
 if (initial.status?.active) {
   throw new Error("Acceptance requires an idle runtime session");
 }
