@@ -699,6 +699,11 @@ if (
     "Producer and consumer-evidence signatures must use distinct Ed25519 keys",
   );
 }
+if ((producerSigningKey || evidenceSigningKeyPath) && !trustedKeyStore) {
+  throw new Error(
+    "Signed System-One acceptance requires --trusted-keys so role, rotation, retirement, and revocation policy cannot be bypassed",
+  );
+}
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
   throw new Error("--snapshot-sha256 must be exactly 64 lowercase hex characters");
