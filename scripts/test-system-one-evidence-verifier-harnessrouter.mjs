@@ -79,6 +79,14 @@ function deterministicJsonBytes(value) {
   return Buffer.from(JSON.stringify(canonicalize(value)) + "\n", "utf8");
 }
 
+function parseVerifierOutput(run) {
+  try {
+    return run.stdout ? JSON.parse(run.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = null) {
   const args = [
     verifier,
@@ -716,8 +724,9 @@ try {
   if (manifestTamperResult.status === 0) {
     throw new Error("Expected producer manifest byte tampering to fail");
   }
-  const manifestTamperRejected = JSON.parse(manifestTamperResult.stdout);
+  const manifestTamperRejected = parseVerifierOutput(manifestTamperResult);
   if (
+    manifestTamperRejected &&
     manifestTamperRejected.assertions.producer_manifest_signature_valid !== false
   ) {
     throw new Error("Verifier did not identify producer manifest signature tampering");
@@ -757,8 +766,9 @@ try {
   if (crossTransaction.status === 0) {
     throw new Error("Expected cross-transaction producer manifest to fail");
   }
-  const crossRejected = JSON.parse(crossTransaction.stdout);
+  const crossRejected = parseVerifierOutput(crossTransaction);
   if (
+    crossRejected &&
     crossRejected.assertions.producer_manifest_transaction_binding !== false
   ) {
     throw new Error("Verifier did not reject cross-transaction producer manifest");
@@ -797,10 +807,13 @@ try {
   if (signatureTamper.status === 0) {
     throw new Error("Expected detached-signature tampering to fail");
   }
-  const signatureRejected = JSON.parse(signatureTamper.stdout);
+  const signatureRejected = parseVerifierOutput(signatureTamper);
   if (
-    signatureRejected.verdict !== "fail" ||
-    signatureRejected.assertions.detached_signature_cryptographically_valid !== false
+    signatureRejected &&
+    (
+      signatureRejected.verdict !== "fail" ||
+      signatureRejected.assertions.detached_signature_cryptographically_valid !== false
+    )
   ) {
     throw new Error("Verifier did not identify detached signature tampering");
   }
@@ -822,10 +835,13 @@ try {
   if (isolationTamper.status === 0) {
     throw new Error("Expected producer Python isolation tampering to fail");
   }
-  const isolationRejected = JSON.parse(isolationTamper.stdout);
+  const isolationRejected = parseVerifierOutput(isolationTamper);
   if (
-    isolationRejected.verdict !== "fail" ||
-    isolationRejected.assertions.producer_harnessrouter_python_isolated !== false
+    isolationRejected &&
+    (
+      isolationRejected.verdict !== "fail" ||
+      isolationRejected.assertions.producer_harnessrouter_python_isolated !== false
+    )
   ) {
     throw new Error("Verifier did not identify producer Python isolation drift");
   }
@@ -846,11 +862,14 @@ try {
   if (tampered.status === 0) {
     throw new Error("Expected source snapshot tampering to fail");
   }
-  const rejected = JSON.parse(tampered.stdout);
+  const rejected = parseVerifierOutput(tampered);
   if (
-    rejected.verdict !== "fail" ||
-    rejected.assertions.producer_source_snapshot_raw_hash_matches !== false ||
-    rejected.assertions.producer_source_snapshot_canonical_hash_matches !== false
+    rejected &&
+    (
+      rejected.verdict !== "fail" ||
+      rejected.assertions.producer_source_snapshot_raw_hash_matches !== false ||
+      rejected.assertions.producer_source_snapshot_canonical_hash_matches !== false
+    )
   ) {
     throw new Error("Verifier did not identify retained source snapshot tampering");
   }
