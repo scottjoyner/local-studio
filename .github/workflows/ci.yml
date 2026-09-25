@@ -50,9 +50,12 @@ jobs:
           node --check scripts/test-system-one-evidence-verifier.mjs
           node --check scripts/test-system-one-evidence-verifier-harnessrouter.mjs
           node --check scripts/test-system-one-python-launch.mjs
+          node --check scripts/system-one-trusted-keys.mjs
+          node --check scripts/test-system-one-trusted-keys.mjs
           node scripts/test-system-one-evidence-verifier.mjs
           node scripts/test-system-one-evidence-verifier-harnessrouter.mjs
           node scripts/test-system-one-python-launch.mjs
+          node scripts/test-system-one-trusted-keys.mjs
 
   controller:
     if: github.event_name != 'schedule'
