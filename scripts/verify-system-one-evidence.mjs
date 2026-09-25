@@ -37,6 +37,10 @@ const SYSTEMONE_CONFIG_SHA256 =
   "459cc500b481878aa1445a6176bb8a6b61db51981696afcc6dd65f9fe3700f4e";
 const SIGNATURE_SCHEMA = "hermes-system-one-detached-signature-v1";
 const SIGNATURE_DOMAIN = "hermes-system-one-uhp-response-bytes-ed25519-v1";
+const EVIDENCE_SIGNATURE_SCHEMA =
+  "local-studio-system-one-acceptance-signature-v1";
+const EVIDENCE_SIGNATURE_DOMAIN =
+  "local-studio-system-one-acceptance-report-bytes-ed25519-v1";
 const AUTHORITY_KEYS = [
   "dispatch_allowed",
   "approval_granted",
@@ -232,6 +236,97 @@ function readVerificationKey(path) {
     key,
     keyId: "ed25519:" + sha256(der),
     rawSha256: sha256(raw),
+  };
+}
+
+function verifyDetachedAcceptanceSignature(
+  reportPath,
+  signaturePath,
+  verificationKey,
+) {
+  if (!verificationKey || !existsSync(signaturePath)) {
+    return {
+      valid: false,
+      reason: !verificationKey ? "public_key_missing" : "signature_file_missing",
+    };
+  }
+
+  let envelope;
+  try {
+    envelope = readJson(signaturePath);
+  } catch {
+    return { valid: false, reason: "signature_invalid_json" };
+  }
+  const expectedKeys = [
+    "schema",
+    "scheme",
+    "domain",
+    "key_id",
+    "report_sha256",
+    "preimage_sha256",
+    "signature_b64",
+  ];
+  if (
+    envelope === null ||
+    typeof envelope !== "object" ||
+    Array.isArray(envelope) ||
+    !sameStrings(Object.keys(envelope), expectedKeys)
+  ) {
+    return { valid: false, reason: "signature_shape_mismatch" };
+  }
+  if (envelope.schema !== EVIDENCE_SIGNATURE_SCHEMA) {
+    return { valid: false, reason: "signature_schema_mismatch" };
+  }
+  if (envelope.scheme !== "ed25519") {
+    return { valid: false, reason: "signature_scheme_mismatch" };
+  }
+  if (envelope.domain !== EVIDENCE_SIGNATURE_DOMAIN) {
+    return { valid: false, reason: "signature_domain_mismatch" };
+  }
+  if (envelope.key_id !== verificationKey.keyId) {
+    return { valid: false, reason: "signature_key_id_mismatch" };
+  }
+
+  const reportBytes = readFileSync(reportPath);
+  const reportSha256 = sha256(reportBytes);
+  if (envelope.report_sha256 !== reportSha256) {
+    return { valid: false, reason: "signature_report_hash_mismatch" };
+  }
+
+  const preimage = Buffer.concat([
+    Buffer.from(EVIDENCE_SIGNATURE_DOMAIN + "\0", "utf8"),
+    reportBytes,
+  ]);
+  const preimageSha256 = sha256(preimage);
+  if (envelope.preimage_sha256 !== preimageSha256) {
+    return { valid: false, reason: "signature_preimage_hash_mismatch" };
+  }
+
+  const encoded =
+    typeof envelope.signature_b64 === "string" ? envelope.signature_b64 : "";
+  if (
+    encoded.length === 0 ||
+    encoded.length > 128 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    return { valid: false, reason: "signature_encoding_invalid" };
+  }
+  const signature = Buffer.from(encoded, "base64");
+  if (
+    signature.length !== 64 ||
+    signature.toString("base64") !== encoded ||
+    !verifySignature(null, preimage, verificationKey.key, signature)
+  ) {
+    return { valid: false, reason: "signature_invalid" };
+  }
+
+  return {
+    valid: true,
+    keyId: verificationKey.keyId,
+    publicKeySha256: verificationKey.rawSha256,
+    reportSha256,
+    preimageSha256,
+    signatureFileSha256: sha256File(signaturePath),
   };
 }
 
@@ -544,6 +639,45 @@ const reportPath = resolve(required(args, "report"));
 requireFile(reportPath, "Acceptance report");
 
 const report = readJson(reportPath);
+const evidencePublicKeyPath = args.get("evidence-public-key")
+  ? resolve(args.get("evidence-public-key"))
+  : null;
+const expectedEvidenceKeyId =
+  args.get("expected-evidence-key-id")?.trim() || null;
+if (
+  expectedEvidenceKeyId &&
+  !/^ed25519:[0-9a-f]{64}$/.test(expectedEvidenceKeyId)
+) {
+  throw new Error("--expected-evidence-key-id must be ed25519:<64 lowercase hex>");
+}
+const evidenceVerificationKey = readVerificationKey(evidencePublicKeyPath);
+const evidenceSignaturePath = `${reportPath}.sig.json`;
+const evidenceSignatureRequired =
+  report.evidence_signature_required === true ||
+  existsSync(evidenceSignaturePath) ||
+  evidenceVerificationKey !== null ||
+  expectedEvidenceKeyId !== null;
+if (evidenceSignatureRequired && !expectedEvidenceKeyId) {
+  throw new Error(
+    "Signed acceptance evidence requires --expected-evidence-key-id as an external trust anchor",
+  );
+}
+let evidenceSignatureVerification = null;
+if (evidenceSignatureRequired) {
+  if (existsSync(evidenceSignaturePath)) {
+    const reportDir = dirname(reportPath);
+    requireBundleFile(
+      reportDir,
+      evidenceSignaturePath,
+      "Acceptance report detached signature",
+    );
+  }
+  evidenceSignatureVerification = verifyDetachedAcceptanceSignature(
+    reportPath,
+    evidenceSignaturePath,
+    evidenceVerificationKey,
+  );
+}
 if (
   !isSafePathSegment(report.pi_session_id) ||
   !isSafePathSegment(report.response_id) ||
@@ -672,6 +806,25 @@ if (!isGitSha(expectedLocalHead) || !isGitSha(expectedMyJevHead)) {
 const assertions = {
   report_schema:
     report.schema === "local-studio-system-one-one-turn-acceptance-v2",
+  evidence_signature_policy_not_downgraded:
+    !evidenceSignatureRequired ||
+    report.evidence_signature_required === true,
+  evidence_signature_public_key_supplied:
+    !evidenceSignatureRequired || evidenceVerificationKey !== null,
+  evidence_signature_expected_key_id_matches:
+    !evidenceSignatureRequired ||
+    (
+      evidenceVerificationKey?.keyId === expectedEvidenceKeyId &&
+      report.expected_evidence_key_id === expectedEvidenceKeyId
+    ),
+  evidence_signature_file_present:
+    !evidenceSignatureRequired || existsSync(evidenceSignaturePath),
+  evidence_signature_cryptographically_valid:
+    !evidenceSignatureRequired ||
+    evidenceSignatureVerification?.valid === true,
+  evidence_signature_report_hash_matches:
+    !evidenceSignatureRequired ||
+    evidenceSignatureVerification?.reportSha256 === sha256File(reportPath),
   report_heads_are_git_shas:
     isGitSha(report.local_studio_head) && isGitSha(report.my_jev_head),
   capture_source_checkouts_clean:
@@ -941,6 +1094,14 @@ const result = {
   verdict,
   acceptance_report: reportPath,
   acceptance_report_sha256: sha256File(reportPath),
+  acceptance_signature_path:
+    evidenceSignatureRequired ? evidenceSignaturePath : null,
+  acceptance_signature_sha256:
+    evidenceSignatureVerification?.signatureFileSha256 ?? null,
+  evidence_public_key_sha256:
+    evidenceVerificationKey?.rawSha256 ?? null,
+  expected_evidence_key_id: expectedEvidenceKeyId,
+  evidence_signature_verification: evidenceSignatureVerification,
   system_one_dir: systemOneDir,
   fixture_path: fixturePath,
   fixture_raw_sha256: fixtureSha,
