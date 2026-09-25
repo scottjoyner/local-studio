@@ -589,6 +589,13 @@ const expectedMyJevHead = required(args, "expected-my-jev-head");
 const publicKeyPath = args.get("producer-public-key")
   ? resolve(args.get("producer-public-key"))
   : null;
+const expectedProducerKeyId = args.get("expected-producer-key-id")?.trim() || null;
+if (
+  expectedProducerKeyId &&
+  !/^ed25519:[0-9a-f]{64}$/.test(expectedProducerKeyId)
+) {
+  throw new Error("--expected-producer-key-id must be ed25519:<64 lowercase hex>");
+}
 const verificationKey = readVerificationKey(publicKeyPath);
 const fixtureSignaturePath = join(
   systemOneDir,
@@ -600,7 +607,13 @@ const signatureEvidencePresent =
   report.producer_signature_required === true ||
   consumed?.signature_verified === true ||
   report?.producer_evidence?.producer_signature != null ||
-  verificationKey !== null;
+  verificationKey !== null ||
+  expectedProducerKeyId !== null;
+if (signatureEvidencePresent && !expectedProducerKeyId) {
+  throw new Error(
+    "Signed evidence requires --expected-producer-key-id as an external trust anchor",
+  );
+}
 let signatureVerification = null;
 if (signatureEvidencePresent) {
   if (existsSync(fixtureSignaturePath)) {
@@ -663,6 +676,13 @@ const assertions = {
     report.producer_signature_required === true,
   signature_public_key_supplied_when_required:
     !signatureEvidencePresent || verificationKey !== null,
+  signature_expected_key_id_matches:
+    !signatureEvidencePresent ||
+    (
+      verificationKey?.keyId === expectedProducerKeyId &&
+      report.expected_producer_key_id === expectedProducerKeyId &&
+      consumed?.signature_key_id === expectedProducerKeyId
+    ),
   detached_signature_file_present_when_required:
     !signatureEvidencePresent || existsSync(fixtureSignaturePath),
   detached_signature_cryptographically_valid:
@@ -885,6 +905,7 @@ const result = {
   fixture_signature_sha256:
     signatureVerification?.signatureFileSha256 ?? null,
   producer_public_key_sha256: verificationKey?.rawSha256 ?? null,
+  expected_producer_key_id: expectedProducerKeyId,
   signature_verification: signatureVerification,
   consume_marker_path: markerPath,
   consume_marker_sha256: sha256(markerRaw),
