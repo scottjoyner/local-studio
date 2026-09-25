@@ -22,6 +22,10 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  checkTrustedKey,
+  readTrustedKeyStore,
+} from "./system-one-trusted-keys.mjs";
 
 const CONTRACT_SHA256 =
   "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
@@ -561,6 +565,7 @@ function verifyProducer(
   fixtureSha,
   verificationKey,
   expectedProducerKeyId,
+  trustedKeyStore,
 ) {
   if (report.producer_mode !== "harnessrouter-script") {
     return {
@@ -653,6 +658,21 @@ function verifyProducer(
       producerManifestParseValid = false;
     }
   }
+  const producerTrustStoreCheck =
+    !trustedKeyStore || !producerManifestPresent
+      ? { valid: true, reason: "trust_store_not_configured" }
+      : producerManifestSignatureVerification?.valid === true &&
+          verificationKey &&
+          expectedProducerKeyId &&
+          typeof producerManifest?.compiled_at === "string"
+        ? checkTrustedKey({
+            store: trustedKeyStore,
+            role: "producer",
+            keyId: expectedProducerKeyId,
+            publicKeySha256: verificationKey.publicKeySha256,
+            at: producerManifest.compiled_at,
+          })
+        : { valid: false, reason: "producer_trust_material_incomplete" };
   const profile = stored?.metadata?.hermes_system_one;
   const recommendSteps = Array.isArray(trace?.steps)
     ? trace.steps.filter((step) => step?.action === "recommend")
@@ -736,6 +756,8 @@ function verifyProducer(
           producerManifestSignatureVerification?.valid === true &&
           producerManifestSignatureVerification?.keyId === expectedProducerKeyId
         ),
+      producer_trust_store_allows_key:
+        !trustedKeyStore || producerTrustStoreCheck.valid === true,
       producer_manifest_parse_valid:
         !producerManifestPresent || producerManifestParseValid === true,
       producer_manifest_report_binding:
@@ -933,6 +955,10 @@ const reportPath = resolve(required(args, "report"));
 requireFile(reportPath, "Acceptance report");
 
 const report = readJson(reportPath);
+const trustedKeysPath = args.get("trusted-keys")
+  ? resolve(args.get("trusted-keys"))
+  : null;
+const trustedKeyStore = readTrustedKeyStore(trustedKeysPath);
 const evidencePublicKeyPath = args.get("evidence-public-key")
   ? resolve(args.get("evidence-public-key"))
   : null;
@@ -951,6 +977,18 @@ const evidenceSignatureRequired =
   existsSync(evidenceSignaturePath) ||
   evidenceVerificationKey !== null ||
   expectedEvidenceKeyId !== null;
+const evidenceTrustStoreCheck =
+  !trustedKeyStore || !evidenceSignatureRequired
+    ? { valid: true, reason: "trust_store_not_configured" }
+    : evidenceVerificationKey && expectedEvidenceKeyId
+      ? checkTrustedKey({
+          store: trustedKeyStore,
+          role: "consumer_evidence",
+          keyId: expectedEvidenceKeyId,
+          publicKeySha256: evidenceVerificationKey.publicKeySha256,
+          at: report.generated_at,
+        })
+      : { valid: false, reason: "evidence_trust_material_incomplete" };
 if (evidenceSignatureRequired && !expectedEvidenceKeyId) {
   throw new Error(
     "Signed acceptance evidence requires --expected-evidence-key-id as an external trust anchor",
@@ -1120,6 +1158,8 @@ const assertions = {
   evidence_signature_cryptographically_valid:
     !evidenceSignatureRequired ||
     evidenceSignatureVerification?.valid === true,
+  evidence_trust_store_allows_key:
+    !trustedKeyStore || evidenceTrustStoreCheck.valid === true,
   evidence_signature_report_hash_matches:
     !evidenceSignatureRequired ||
     evidenceSignatureVerification?.reportSha256 === sha256File(reportPath),
@@ -1376,6 +1416,7 @@ const producer = verifyProducer(
   fixtureSha,
   verificationKey,
   expectedProducerKeyId,
+  trustedKeyStore,
 );
 Object.assign(assertions, producer.assertions);
 Object.assign(assertions, {
@@ -1398,6 +1439,9 @@ const result = {
   verdict,
   acceptance_report: reportPath,
   acceptance_report_sha256: sha256File(reportPath),
+  trusted_key_store_path: trustedKeysPath,
+  trusted_key_store_sha256: trustedKeyStore?.sha256 ?? null,
+  evidence_trust_store_check: evidenceTrustStoreCheck,
   acceptance_signature_path:
     evidenceSignatureRequired ? evidenceSignaturePath : null,
   acceptance_signature_sha256:
