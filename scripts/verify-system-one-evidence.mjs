@@ -144,12 +144,20 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-function readJsonLines(path) {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
+function parseJsonLinesBytes(raw, label) {
+  if (raw.length > 0 && raw[raw.length - 1] !== 0x0a) {
+    throw new Error(label + " must end on a complete JSONL line");
+  }
+  return raw
+    .toString("utf8")
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function readJsonLines(path) {
+  if (!existsSync(path)) return [];
+  return parseJsonLinesBytes(readFileSync(path), "JSONL file");
 }
 
 function rowFingerprint(row) {
@@ -727,7 +735,7 @@ const replayInfluence = replayRows.filter((row) =>
   INFLUENCE_OUTCOMES.has(row?.outcome),
 );
 const reportedRows = [...rows, ...replayRows];
-const ledgerRowsForReceipt = ledgerRows.filter(
+const ledgerRowsForReceipt = checkpointRows.filter(
   (row) => row?.receipt_id === report.receipt_id,
 );
 const ledgerInfluenceForReceipt = ledgerRowsForReceipt.filter((row) =>
@@ -745,6 +753,10 @@ const ledgerCheckpointPrefix =
   checkpointBytes <= ledgerRaw.length
     ? ledgerRaw.subarray(0, checkpointBytes)
     : null;
+const checkpointRows =
+  ledgerCheckpointPrefix !== null
+    ? parseJsonLinesBytes(ledgerCheckpointPrefix, "Ledger checkpoint")
+    : [];
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = required(args, "expected-local-head");
 const expectedMyJevHead = required(args, "expected-my-jev-head");
@@ -922,7 +934,7 @@ const assertions = {
     ledgerCheckpointPrefix !== null &&
     sha256(ledgerCheckpointPrefix) === report?.ledger_checkpoint?.sha256,
   report_rows_exist_in_durable_ledger:
-    rowsAppearInOrder(ledgerRows, reportedRows),
+    rowsAppearInOrder(checkpointRows, reportedRows),
   durable_ledger_has_single_influence_sequence:
     ledgerInfluenceForReceipt.length === 4 &&
     rowsAppearInOrder(ledgerInfluenceForReceipt, rows),
@@ -1115,6 +1127,7 @@ const result = {
   consume_marker_sha256: sha256(markerRaw),
   ledger_path: ledgerPath,
   ledger_checkpoint: report.ledger_checkpoint,
+  ledger_checkpoint_row_count: checkpointRows.length,
   local_studio_head: report.local_studio_head,
   my_jev_head: report.my_jev_head,
   verifier_local_studio_checkout: {
