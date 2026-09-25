@@ -6,6 +6,7 @@ import {
   sign,
 } from "node:crypto";
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -311,6 +312,28 @@ try {
   const verified = JSON.parse(valid.stdout);
   if (verified.verdict !== "pass") {
     throw new Error("Verifier returned non-pass verdict for valid bundle");
+  }
+
+  // The report signs/anchors a ledger prefix. Later appends, even for the same
+  // receipt, must not retroactively change the historical acceptance verdict.
+  appendFileSync(
+    ledgerPath,
+    JSON.stringify({
+      outcome: "ignored",
+      reason: "post_checkpoint_observation",
+      response_id: responseId,
+      receipt_id: receiptId,
+    }) + "\n",
+    "utf8",
+  );
+  const afterAppend = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+  );
+  if (afterAppend.status !== 0 || JSON.parse(afterAppend.stdout).verdict !== "pass") {
+    throw new Error("Post-checkpoint ledger append changed historical verification");
   }
 
   const fixtureBytes = readFileSync(fixturePath);
