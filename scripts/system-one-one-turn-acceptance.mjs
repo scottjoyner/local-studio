@@ -19,6 +19,10 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  requireAbsolutePythonForTrustedProducer,
+  runIsolatedPythonModule,
+} from "./system-one-python-launch.mjs";
 
 const EVIDENCE_SIGNATURE_SCHEMA =
   "local-studio-system-one-acceptance-signature-v1";
@@ -337,6 +341,13 @@ if (producerMode === "harnessrouter-script" && (!snapshotPath || !harnessrouterR
     "--producer harnessrouter-script requires --snapshot and --harnessrouter-repo",
   );
 }
+if (producerMode === "harnessrouter-script") {
+  requireAbsolutePythonForTrustedProducer(python, "--python");
+  requireAbsolutePythonForTrustedProducer(
+    harnessrouterPython,
+    "--harnessrouter-python",
+  );
+}
 if (producerSigningKey && producerMode !== "harnessrouter-script") {
   throw new Error("--producer-signing-key is supported only with harnessrouter-script");
 }
@@ -468,8 +479,6 @@ let expectedProducerModel;
 
 if (producerMode === "fixture") {
   const producerArgs = [
-    "-m",
-    "my_jev.uhp_fixture",
     "--decision",
     "examples/uhp/decision.json",
     "--fleet-resolution",
@@ -511,18 +520,11 @@ if (producerMode === "fixture") {
     "--output",
     fixturePath,
   ];
-  producer = spawnSync(python, producerArgs, {
-    cwd: myJevRepo,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPATH: [
-        join(myJevRepo, "src"),
-        process.env.PYTHONPATH ?? "",
-      ]
-        .filter(Boolean)
-        .join(process.platform === "win32" ? ";" : ":"),
-    },
+  producer = runIsolatedPythonModule({
+    python,
+    repoRoot: myJevRepo,
+    module: "my_jev.uhp_fixture",
+    argv: producerArgs,
   });
   if (producer.status !== 0) {
     throw new Error(
@@ -534,8 +536,6 @@ if (producerMode === "fixture") {
 } else {
   const producerDir = join(systemOneDir, "producer", responseId);
   const producerArgs = [
-    "-m",
-    "my_jev.harnessrouter_probe",
     "--harnessrouter-repo",
     harnessrouterRepo,
     "--harnessrouter-python",
@@ -562,18 +562,11 @@ if (producerMode === "fixture") {
     canary,
     ...(producerSigningKey ? ["--signing-key", producerSigningKey] : []),
   ];
-  producer = spawnSync(python, producerArgs, {
-    cwd: myJevRepo,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPATH: [
-        join(myJevRepo, "src"),
-        process.env.PYTHONPATH ?? "",
-      ]
-        .filter(Boolean)
-        .join(process.platform === "win32" ? ";" : ":"),
-    },
+  producer = runIsolatedPythonModule({
+    python,
+    repoRoot: myJevRepo,
+    module: "my_jev.harnessrouter_probe",
+    argv: producerArgs,
   });
   if (producer.status !== 0) {
     throw new Error(
