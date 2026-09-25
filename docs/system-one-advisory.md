@@ -446,6 +446,7 @@ node scripts/system-one-one-turn-acceptance.mjs \
   --harnessrouter-repo /absolute/path/to/harnessrouter \
   --harnessrouter-python /absolute/path/to/harnessrouter-python \
   --producer-signing-key /secure/producer-private.pem \
+  --producer-public-key /secure/producer-public.pem \
   --expected-producer-key-id 'ed25519:<producer-spki-sha256>' \
   --evidence-signing-key /secure/local-studio-evidence-private.pem \
   --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>'
@@ -468,6 +469,39 @@ session, then calls `my-jev-harnessrouter-probe`. That probe requires
 runs the parameterized System-One scripted provider with no provider network
 call, verifies the terminal recommendation and trace, compiles the bound UHP
 response, and returns it to this consumer acceptance.
+
+In signed HarnessRouter mode, Local Studio performs a producer preflight **before**
+installing the session-scoped advisory. It independently verifies:
+
+- exact stored-response Ed25519 signature using the external producer public key
+- exact producer-provenance-manifest Ed25519 signature with the same producer role key
+- response/manifest key ids against the external expected producer key id
+- response/receipt/Pi-session/project/snapshot transaction binding
+- retained source snapshot, recommendation, trace, and config hashes named by the manifest
+- my-jev/HarnessRouter/SystemOneHarness implementation lineage
+- isolated producer/heartbeat Python executable hashes and isolation flags
+- sanitized-environment evidence
+- all-false authority and bounded receipt expiry
+
+Only after all producer preflight checks pass are the response and response
+signature copied into `system-one/sessions/<pi-session>.json[.sig.json]`.
+
+The signed producer directory contains:
+
+- `stored-uhp-response.json`
+- `stored-uhp-response.json.sig.json`
+- `producer-evidence-manifest.json`
+- `producer-evidence-manifest.json.sig.json`
+- retained source snapshot, recommendation, trace, config, and producer report
+
+The final Local Studio report binds:
+
+- `producer_evidence_manifest_sha256`
+- `producer_evidence_manifest_signature_sha256`
+- `producer_evidence_manifest_key_id`
+- `producer_evidence_manifest_verified=true`
+
+before that report is signed by the distinct Local Studio evidence key.
 
 The final report records `producer_mode` and embeds the producer evidence. The
 producer sub-report and trace are retained beneath:
