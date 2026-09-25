@@ -5,6 +5,7 @@ import {
   createPublicKey,
   verify as verifySignature,
 } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -20,6 +21,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CONTRACT_SHA256 =
   "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
@@ -88,6 +90,32 @@ function sha256(value) {
 
 function sha256File(path) {
   return sha256(readFileSync(path));
+}
+
+function git(repoRoot, args) {
+  return execFileSync("git", ["-C", repoRoot, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+function checkoutEvidence(repoRoot) {
+  const head = git(repoRoot, ["rev-parse", "HEAD"]);
+  const status = execFileSync(
+    "git",
+    ["-C", repoRoot, "status", "--porcelain=v1", "--untracked-files=all"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+  );
+  return {
+    head,
+    clean: status.trim() === "",
+    files: Object.fromEntries(
+      RUNTIME_PROVENANCE_FILES.map((relativePath) => [
+        relativePath,
+        sha256File(join(repoRoot, relativePath)),
+      ]),
+    ),
+  };
 }
 
 function canonicalize(value) {
@@ -586,6 +614,13 @@ const ledgerCheckpointPrefix =
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = required(args, "expected-local-head");
 const expectedMyJevHead = required(args, "expected-my-jev-head");
+const defaultLocalStudioRepo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const localStudioRepo = realpathSync(
+  args.get("local-studio-repo")
+    ? resolve(args.get("local-studio-repo"))
+    : defaultLocalStudioRepo,
+);
+const reviewedLocalStudio = checkoutEvidence(localStudioRepo);
 const publicKeyPath = args.get("producer-public-key")
   ? resolve(args.get("producer-public-key"))
   : null;
@@ -647,6 +682,10 @@ const assertions = {
     report.local_studio_head === expectedLocalHead,
   expected_my_jev_head_matches:
     report.my_jev_head === expectedMyJevHead,
+  verifier_local_checkout_head_matches:
+    reviewedLocalStudio.head === expectedLocalHead,
+  verifier_local_checkout_clean:
+    reviewedLocalStudio.clean === true,
   runtime_provenance_schema:
     runtimeProvenance?.schema === "local-studio-agent-runtime-provenance-v1",
   runtime_provenance_head_matches:
@@ -666,6 +705,10 @@ const assertions = {
   runtime_provenance_file_hashes_valid:
     RUNTIME_PROVENANCE_FILES.every((key) =>
       isSha256(runtimeProvenanceFiles[key]),
+    ),
+  runtime_provenance_file_hashes_match_reviewed_source:
+    RUNTIME_PROVENANCE_FILES.every(
+      (key) => runtimeProvenanceFiles[key] === reviewedLocalStudio.files[key],
     ),
   snapshot_is_sha256: isSha256(report.snapshot_sha256),
   project_fingerprint_is_sha256: isSha256(report.project_fingerprint),
@@ -913,6 +956,12 @@ const result = {
   ledger_checkpoint: report.ledger_checkpoint,
   local_studio_head: report.local_studio_head,
   my_jev_head: report.my_jev_head,
+  verifier_local_studio_checkout: {
+    path: localStudioRepo,
+    head: reviewedLocalStudio.head,
+    clean: reviewedLocalStudio.clean,
+    files: reviewedLocalStudio.files,
+  },
   runtime_provenance: runtimeProvenance,
   runtime_provenance_sha256: report.runtime_provenance_sha256,
   producer_mode: report.producer_mode,
