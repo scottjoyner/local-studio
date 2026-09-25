@@ -10,10 +10,11 @@
   },
   "scripts": {
     "bundle": "node ../../scripts/project.mjs bundle-agent-runtime",
-    "build": "node ../../scripts/project.mjs prepare-agent-runtime && tsc -p tsconfig.build.json && node ../../scripts/project.mjs postbuild-agent-runtime",
-    "check": "bun run build",
+    "build": "node ../../scripts/project.mjs prepare-agent-runtime && tsc -p tsconfig.build.json && node ../../scripts/project.mjs postbuild-agent-runtime && node ../../scripts/write-agent-runtime-provenance.mjs",
+    "check": "bun run build && bun run test:system-one-signature",
     "dev": "bun --watch src/server.ts",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test:system-one-signature": "bun test test/system-one-signature.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.83.0",
