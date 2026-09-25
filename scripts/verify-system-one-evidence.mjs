@@ -977,6 +977,11 @@ const evidenceSignatureRequired =
   existsSync(evidenceSignaturePath) ||
   evidenceVerificationKey !== null ||
   expectedEvidenceKeyId !== null;
+if (evidenceSignatureRequired && !trustedKeyStore) {
+  throw new Error(
+    "Signed acceptance evidence requires --trusted-keys; lifecycle policy is mandatory",
+  );
+}
 const evidenceTrustStoreCheck =
   !trustedKeyStore || !evidenceSignatureRequired
     ? { valid: true, reason: "trust_store_not_configured" }
@@ -1114,6 +1119,11 @@ const signatureEvidencePresent =
   report?.producer_evidence?.producer_signature != null ||
   verificationKey !== null ||
   expectedProducerKeyId !== null;
+if (signatureEvidencePresent && !trustedKeyStore) {
+  throw new Error(
+    "Signed producer evidence requires --trusted-keys; lifecycle policy is mandatory",
+  );
+}
 if (signatureEvidencePresent && !expectedProducerKeyId) {
   throw new Error(
     "Signed evidence requires --expected-producer-key-id as an external trust anchor",
