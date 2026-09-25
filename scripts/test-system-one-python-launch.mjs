@@ -43,6 +43,11 @@ const original = {
 };
 
 try {
+  // Resolve the interpreter before installing hostile ambient Python state.
+  // Otherwise the discovery probe itself would execute the fake sitecustomize
+  // and create a false failure before the hardened launch is exercised.
+  const python = pythonExecutable();
+
   const repoRoot = join(root, "repo");
   const packageRoot = join(repoRoot, "src", "probe_pkg");
   const ambient = join(root, "ambient");
@@ -92,7 +97,6 @@ try {
   process.env.TYPESAFE_API_KEY = "must-not-reach-python";
   process.env.SYSTEM_ONE_SITECUSTOMIZE_MARKER = siteMarker;
 
-  const python = pythonExecutable();
   requireAbsolutePythonForTrustedProducer(python, "test python");
   let rejectedRelative = false;
   try {
