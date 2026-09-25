@@ -4,7 +4,7 @@ import {
   verify as verifySignature,
   type KeyObject,
 } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 
 export const SYSTEM_ONE_SIGNATURE_SCHEMA =
   "hermes-system-one-detached-signature-v1";
@@ -78,6 +78,13 @@ function loadPolicy(env: NodeJS.ProcessEnv): SignaturePolicy {
   }
 
   try {
+    const stat = lstatSync(keyPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return { mode: "invalid", reason: "signature_key_invalid" };
+    }
+    if (process.platform !== "win32" && (stat.mode & 0o022) !== 0) {
+      return { mode: "invalid", reason: "signature_key_insecure_permissions" };
+    }
     const raw = readFileSync(keyPath);
     if (raw.length === 0 || raw.length > 16 * 1024) {
       return { mode: "invalid", reason: "signature_key_invalid" };
@@ -91,7 +98,7 @@ function loadPolicy(env: NodeJS.ProcessEnv): SignaturePolicy {
       mode: "required",
       key,
       keyId: `ed25519:${sha256(der)}`,
-      publicKeySha256: sha256(raw),
+      publicKeySha256: sha256(der),
     };
   } catch {
     return { mode: "invalid", reason: "signature_key_invalid" };
