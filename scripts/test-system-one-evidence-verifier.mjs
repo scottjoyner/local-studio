@@ -59,8 +59,17 @@ function runVerifier(verifier, report, localHead, myJevHead) {
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const localStudioRoot = resolve(scriptDir, "..");
 const verifier = resolve(scriptDir, "verify-system-one-evidence.mjs");
 const root = mkdtempSync(join(tmpdir(), "local-studio-system-one-verify-"));
+
+function gitHead(repoRoot) {
+  const result = spawnSync("git", ["-C", repoRoot, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error("could not resolve Local Studio test HEAD");
+  return result.stdout.trim();
+}
 
 try {
   const systemOne = join(root, "system-one");
@@ -80,7 +89,7 @@ try {
   const projectFingerprint = "a".repeat(64);
   const snapshotSha256 = "b".repeat(64);
   const modelId = "coding-model:test";
-  const localStudioHead = "1".repeat(40);
+  const localStudioHead = gitHead(localStudioRoot);
   const myJevHead = "2".repeat(40);
 
   const profile = {
@@ -213,14 +222,14 @@ try {
     [
       "services/agent-runtime/src/runtime-provenance.ts",
       "services/agent-runtime/src/system-one-advisory.ts",
-  "services/agent-runtime/src/system-one-signature.ts",
+      "services/agent-runtime/src/system-one-signature.ts",
       "services/agent-runtime/src/pi-runtime.ts",
       "services/agent-runtime/src/pi-runtime-types.ts",
       "services/agent-runtime/src/http/handlers.ts",
       "services/agent-runtime/src/server.ts",
       "services/agent-runtime/package.json",
       "services/agent-runtime/bun.lock",
-    ].map((key, index) => [key, String(index + 1).repeat(64).slice(0, 64)]),
+    ].map((key) => [key, sha256(readFileSync(join(localStudioRoot, key)))]),
   );
   const runtimeProvenance = {
     schema: "local-studio-agent-runtime-provenance-v1",
