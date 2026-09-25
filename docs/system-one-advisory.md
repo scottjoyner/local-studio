@@ -253,8 +253,11 @@ Before injection Local Studio verifies:
 `work_id` and `snapshot_sha256` are source-lineage fields at the Local Studio boundary. Local
 Studio validates their shape and records them, but it does not have the producer's source work graph
 or heartbeat snapshot available to independently recompute them. The my-jev compiler is responsible
-for matching `snapshot_sha256` to the exact source snapshot. Until producer signatures are added,
-these two lineage fields are not independent consumer-side authenticity proofs.
+for matching `snapshot_sha256` to the exact source snapshot. For authenticated runs, my-jev now
+signs the **exact stored UHP response bytes** with a detached Ed25519 signature. Local Studio
+verifies that signature before validation/injection, so the bound work/session/project/snapshot
+lineage travels inside producer-authenticated response bytes rather than relying only on a
+self-reported hash.
 
 This means a fresh valid response generated for another Pi session or workspace
 is still rejected.
@@ -296,6 +299,66 @@ The matching `my-jev#2` fixture suite now includes:
 
 A valid response consumed a second time should produce
 `replay_already_consumed`.
+
+
+## Producer and consumer evidence authenticity
+
+The hardened path uses two deliberately separate Ed25519 trust domains.
+
+### Producer response key
+
+my-jev signs the exact stored UHP response bytes with:
+
+- schema: `hermes-system-one-detached-signature-v1`
+- domain: `hermes-system-one-uhp-response-bytes-ed25519-v1`
+- preimage: `domain || NUL || exact stored response bytes`
+
+The signature sidecar records the response SHA-256, preimage SHA-256, and an
+`ed25519:<sha256(SPKI DER)>` key id.
+
+Local Studio verifies the raw bytes before parsing the advisory. A configured
+public key makes signatures mandatory; unsigned downgrade, wrong key id,
+malformed envelope, non-canonical base64, response-byte drift, and invalid
+Ed25519 signatures all fail closed.
+
+For a separately pinned live trust anchor configure:
+
+```bash
+export LOCAL_STUDIO_SYSTEM_ONE_REQUIRE_SIGNATURE=true
+export LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH=/secure/producer-public.pem
+export LOCAL_STUDIO_SYSTEM_ONE_EXPECTED_KEY_ID='ed25519:<sha256-spki-der>'
+```
+
+The public key must be a bounded regular non-symlink file and must not be
+group/other writable on POSIX. The expected key-id pin detects replacement of
+the key file with another valid Ed25519 key.
+
+### Consumer evidence key
+
+The Local Studio acceptance harness can separately sign the exact retained
+acceptance-report bytes with:
+
+- schema: `local-studio-system-one-acceptance-signature-v1`
+- domain: `local-studio-system-one-acceptance-report-bytes-ed25519-v1`
+- preimage: `domain || NUL || exact report bytes`
+
+This key authenticates the consumer-side causal evidence: runtime provenance,
+ledger checkpoint hash, consume-marker hash, fixture/signature hashes,
+before/after state, replay evidence, and the producer evidence embedded in the
+report.
+
+The producer key and consumer-evidence key **must be distinct**. Reusing one key
+for both trust domains is rejected.
+
+Private signing keys are loaded only when needed, must be regular non-symlink
+files, and must not be accessible to group/other on POSIX. The Local Studio
+consumer-evidence private key is intentionally loaded only after all runtime
+interaction has finished.
+
+The offline verifier requires public verification material plus separately
+pinned expected key ids. Supplying a trust anchor makes the corresponding
+signature mandatory; deleting signature files cannot downgrade the bundle to
+unsigned verification.
 
 ## One-turn causal acceptance evidence
 
@@ -377,15 +440,27 @@ node scripts/system-one-one-turn-acceptance.mjs \
   --cwd /absolute/path/to/project \
   --data-dir /tmp/local-studio-uhp-acceptance \
   --my-jev-repo /absolute/path/to/my-jev \
+  --python /absolute/path/to/my-jev-python \
   --snapshot /tmp/hermes-heartbeat.json \
   --snapshot-sha256 '<exact heartbeat snapshot sha256>' \
   --harnessrouter-repo /absolute/path/to/harnessrouter \
-  --harnessrouter-python /path/to/harnessrouter/runner/python
+  --harnessrouter-python /absolute/path/to/harnessrouter-python \
+  --producer-signing-key /secure/producer-private.pem \
+  --expected-producer-key-id 'ed25519:<producer-spki-sha256>' \
+  --evidence-signing-key /secure/local-studio-evidence-private.pem \
+  --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>'
 ```
 
 The runtime under test must use the same isolated
 `LOCAL_STUDIO_DATA_DIR=/tmp/local-studio-uhp-acceptance`. The heartbeat
 snapshot must be fresh and its supplied SHA-256 must match the producer probe.
+
+For `harnessrouter-script`, both Python executables must be absolute paths.
+Local Studio launches my-jev with Python isolated mode (`-I`), an explicit
+exact-head source path, and a sanitized environment that removes ambient
+`PYTHON*`, `LD_*`, `DYLD_*`, OpenRouter, and TypeSafe provider variables.
+CI attacks this boundary with a hostile `sitecustomize.py` and environment
+sentinels.
 
 In `harnessrouter-script` mode the harness first establishes the canonical Pi
 session, then calls `my-jev-harnessrouter-probe`. That probe requires
@@ -421,6 +496,10 @@ node scripts/verify-system-one-evidence.mjs \
   --report /tmp/local-studio-uhp-acceptance/system-one/acceptance/<response-id>.json \
   --expected-local-head '<exact Local Studio SHA>' \
   --expected-my-jev-head '<exact my-jev SHA>' \
+  --producer-public-key /secure/producer-public.pem \
+  --expected-producer-key-id 'ed25519:<producer-spki-sha256>' \
+  --evidence-public-key /secure/local-studio-evidence-public.pem \
+  --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>' \
   --output /tmp/local-studio-uhp-acceptance/system-one/acceptance/<response-id>.verified.json
 ```
 
@@ -442,9 +521,12 @@ It independently requires, among other checks:
   pinned HarnessRouter head, one terminal `recommend` step, config v1,
   all-false authority, trace binding, and `script/s1` with no fallback
 
-CI runs a dependency-free synthetic self-test that first verifies a valid
-retained bundle and then tampers the assistant-output hash and requires the
-offline verifier to fail.
+CI runs dependency-free adversarial self-tests that verify a coherent retained
+bundle, then attack assistant-output evidence, producer mode, source snapshot,
+detached producer signature, consumer-report signature, stripped signatures,
+symlink/path containment, mutable public-key trust anchors, reviewed Git heads,
+runtime provenance, post-checkpoint ledger appends, and ambient Python startup
+injection.
 
 The harness deliberately uses three phases:
 
@@ -490,9 +572,8 @@ profile SHA-256 to Local Studio's ad-hoc canonical profile SHA-256. Python and
 JavaScript can serialize semantically equal JSON numbers differently (for
 example `1.0` versus `1`).
 
-The deterministic HarnessRouter path instead compares the exact stored-response
-bytes copied from the producer with the raw response hash observed by the
-consumer. A future Ed25519 authenticity layer should sign a standards-based
-canonical representation such as RFC 8785/JCS, or use a detached signature over
-the exact stored bytes; it must not assume the existing language-local canonical
-hashes are interchangeable.
+The deterministic HarnessRouter path compares the exact stored-response bytes
+copied from the producer with the raw response hash observed by the consumer,
+and the authenticated path now adds a detached Ed25519 signature over those
+**exact bytes**. This deliberately avoids assuming Python and JavaScript
+language-local canonical JSON hashes are interchangeable.
