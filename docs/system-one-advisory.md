@@ -449,7 +449,8 @@ node scripts/system-one-one-turn-acceptance.mjs \
   --producer-public-key /secure/producer-public.pem \
   --expected-producer-key-id 'ed25519:<producer-spki-sha256>' \
   --evidence-signing-key /secure/local-studio-evidence-private.pem \
-  --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>'
+  --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>' \
+  --trusted-keys /secure/system-one-trusted-keys.json
 ```
 
 The runtime under test must use the same isolated
@@ -486,6 +487,14 @@ installing the session-scoped advisory. It independently verifies:
 Only after all producer preflight checks pass are the response and response
 signature copied into `system-one/sessions/<pi-session>.json[.sig.json]`.
 
+When `--trusted-keys` is supplied, producer preflight also requires the
+expected producer key to be active for the manifest's signed `compiled_at`
+time, bound to role `producer`, and not revoked. The Local Studio evidence key
+is checked at the signed acceptance report's `generated_at` time with role
+`consumer_evidence`. A revoked key always fails, even for historical evidence;
+a normally retired key may verify evidence captured before its retirement time.
+The same Ed25519 key id may never appear in two trust-store entries or roles.
+
 The signed producer directory contains:
 
 - `stored-uhp-response.json`
@@ -512,6 +521,66 @@ so the deterministic chain can be audited as one evidence package:
 
 `heartbeat snapshot -> finite MCP -> HarnessRouter scripted System-One -> recommendation -> bound UHP response -> one Local Studio coding turn`.
 
+### Verification-only trust store
+
+Generate two distinct Ed25519 keypairs outside the repositories:
+
+```bash
+umask 077
+openssl genpkey -algorithm ED25519 -out /secure/system-one-producer-private.pem
+openssl pkey -in /secure/system-one-producer-private.pem -pubout \
+  -out /secure/system-one-producer-public.pem
+
+openssl genpkey -algorithm ED25519 -out /secure/local-studio-evidence-private.pem
+openssl pkey -in /secure/local-studio-evidence-private.pem -pubout \
+  -out /secure/local-studio-evidence-public.pem
+
+PRODUCER_KEY_ID="ed25519:$(openssl pkey -pubin \
+  -in /secure/system-one-producer-public.pem -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+EVIDENCE_KEY_ID="ed25519:$(openssl pkey -pubin \
+  -in /secure/local-studio-evidence-public.pem -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+
+printf '%s\n%s\n' "$PRODUCER_KEY_ID" "$EVIDENCE_KEY_ID"
+```
+
+The two ids must differ.
+
+Create `/secure/system-one-trusted-keys.json` with entries sorted by role then
+key id. The trust store contains verification metadata only; it never contains
+private key material:
+
+```json
+{
+  "schema": "system-one-trusted-keys-v1",
+  "keys": [
+    {
+      "role": "consumer_evidence",
+      "key_id": "ed25519:<evidence-spki-sha256>",
+      "public_key_sha256": "<evidence-spki-sha256>",
+      "active_from": "2026-09-25T00:00:00Z",
+      "retire_after": null,
+      "revoked_at": null,
+      "note": "Local Studio acceptance evidence"
+    },
+    {
+      "role": "producer",
+      "key_id": "ed25519:<producer-spki-sha256>",
+      "public_key_sha256": "<producer-spki-sha256>",
+      "active_from": "2026-09-25T00:00:00Z",
+      "retire_after": null,
+      "revoked_at": null,
+      "note": "System-One deterministic producer"
+    }
+  ]
+}
+```
+
+The file must be a regular non-symlink file and must not be group/other
+writable. Rotation is performed by adding the replacement key under the same
+role with a future/active `active_from`, setting `retire_after` on the old
+key, and retaining overlap until all producers/consumers have moved. Setting
+`revoked_at` causes that key to fail verification immediately.
+
 ### Independent offline evidence verification
 
 Do not treat the acceptance process's own `verdict: pass` as the final proof.
@@ -534,6 +603,7 @@ node scripts/verify-system-one-evidence.mjs \
   --expected-producer-key-id 'ed25519:<producer-spki-sha256>' \
   --evidence-public-key /secure/local-studio-evidence-public.pem \
   --expected-evidence-key-id 'ed25519:<evidence-spki-sha256>' \
+  --trusted-keys /secure/system-one-trusted-keys.json \
   --output /tmp/local-studio-uhp-acceptance/system-one/acceptance/<response-id>.verified.json
 ```
 
