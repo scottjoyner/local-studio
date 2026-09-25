@@ -75,6 +75,10 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
+function deterministicJsonBytes(value) {
+  return Buffer.from(JSON.stringify(canonicalize(value)) + "\n", "utf8");
+}
+
 function runVerifier(verifier, report, localHead, myJevHead, publicKeyPath = null) {
   const args = [
     verifier,
@@ -227,6 +231,8 @@ try {
   const profile = {
     contract_sha256: CONTRACT_SHA256,
     receipt_id: receiptId,
+    observed_at: "2026-09-24T12:00:30Z",
+    expires_at: "2026-09-24T12:05:00Z",
     binding: {
       consumer: "local-studio",
       work_id: "work-harnessrouter-verifier",
@@ -328,6 +334,75 @@ try {
   const fixtureSignaturePath = fixturePath + ".sig.json";
   writeFileSync(fixtureSignaturePath, readFileSync(producerSignaturePath));
 
+  const manifest = {
+    schema: "hermes-system-one-producer-evidence-manifest-v1",
+    response_id: responseId,
+    receipt_id: receiptId,
+    consumer_session_id: piSession,
+    project_fingerprint: projectFingerprint,
+    snapshot_sha256: snapshotSha256,
+    stored_response_sha256: sha256(readFileSync(producerStoredPath)),
+    stored_response_signature_sha256: sha256(readFileSync(producerSignaturePath)),
+    producer_key_id: signatureEnvelope.key_id,
+    source_snapshot_raw_sha256: sha256(readFileSync(sourceSnapshotPath)),
+    source_snapshot_canonical_sha256: snapshotSha256,
+    recommendation_sha256: sha256(readFileSync(recommendationPath)),
+    trace_sha256: traceSha256,
+    systemone_config_sha256: SYSTEMONE_CONFIG_SHA256,
+    my_jev_head: myJevHead,
+    harnessrouter_head: HARNESSROUTER_HEAD,
+    harnessrouter_driver_git_blob_sha1: HARNESSROUTER_DRIVER_BLOB_SHA1,
+    systemone_provider_git_blob_sha1: SYSTEMONE_PROVIDER_BLOB_SHA1,
+    systemone_package_manifest_sha256: SYSTEMONE_PACKAGE_MANIFEST_SHA256,
+    producer_python: {
+      executable_sha256: "9".repeat(64),
+      isolated: true,
+      ignore_environment: true,
+      no_site: true,
+    },
+    heartbeat_mcp_python: {
+      executable_sha256: "9".repeat(64),
+      isolated: true,
+      ignore_environment: true,
+      no_site: true,
+    },
+    sanitized_environment: {
+      removed_keys: ["PYTHONPATH", "TYPESAFE_API_KEY"],
+      provider_credentials_present: false,
+      startup_injection_present: false,
+    },
+    compiled_at: "2026-09-24T12:00:30Z",
+    receipt_expires_at: "2026-09-24T12:05:00Z",
+    authority: AUTHORITY,
+  };
+  const manifestPath = join(producerDir, "producer-evidence-manifest.json");
+  const manifestBytes = deterministicJsonBytes(manifest);
+  writeFileSync(manifestPath, manifestBytes);
+  const manifestDomain =
+    "hermes-system-one-producer-evidence-manifest-ed25519-v1";
+  const manifestPreimage = Buffer.concat([
+    Buffer.from(manifestDomain + "\0", "utf8"),
+    manifestBytes,
+  ]);
+  const manifestSignatureEnvelope = {
+    schema: "hermes-system-one-producer-evidence-signature-v1",
+    scheme: "ed25519",
+    domain: manifestDomain,
+    key_id: signatureEnvelope.key_id,
+    manifest_sha256: sha256(manifestBytes),
+    preimage_sha256: sha256(manifestPreimage),
+    signature_b64: sign(null, manifestPreimage, privateKey).toString("base64"),
+  };
+  const manifestSignaturePath = join(
+    producerDir,
+    "producer-evidence-manifest.json.sig.json",
+  );
+  writeFileSync(
+    manifestSignaturePath,
+    JSON.stringify(manifestSignatureEnvelope, null, 2) + "\n",
+    "utf8",
+  );
+
   const producerReport = {
     schema: "my-jev-harnessrouter-script-probe-v1",
     verdict: "pass",
@@ -388,6 +463,13 @@ try {
     producer_signature: signatureEnvelope,
     producer_signature_file: producerSignaturePath,
     producer_signature_file_sha256: sha256(readFileSync(producerSignaturePath)),
+    producer_evidence_manifest: manifest,
+    producer_evidence_manifest_file: manifestPath,
+    producer_evidence_manifest_file_sha256: sha256(readFileSync(manifestPath)),
+    producer_evidence_manifest_signature: manifestSignatureEnvelope,
+    producer_evidence_manifest_signature_file: manifestSignaturePath,
+    producer_evidence_manifest_signature_file_sha256:
+      sha256(readFileSync(manifestSignaturePath)),
     consumer_session_id: piSession,
     project_fingerprint: projectFingerprint,
     receipt_id: receiptId,
@@ -552,6 +634,11 @@ try {
     expected_producer_key_id: signatureEnvelope.key_id,
     fixture_signature_path: fixtureSignaturePath,
     fixture_signature_sha256: sha256(readFileSync(fixtureSignaturePath)),
+    producer_evidence_manifest_sha256: sha256(readFileSync(manifestPath)),
+    producer_evidence_manifest_signature_sha256:
+      sha256(readFileSync(manifestSignaturePath)),
+    producer_evidence_manifest_key_id: signatureEnvelope.key_id,
+    producer_evidence_manifest_verified: true,
     consume_marker_sha256: sha256(readFileSync(markerPath)),
     ledger_checkpoint: {
       bytes: Buffer.byteLength(ledgerText),
@@ -607,6 +694,86 @@ try {
   if (verified.verdict !== "pass") {
     throw new Error("HarnessRouter-mode verifier returned non-pass");
   }
+
+  const originalManifestBytes = readFileSync(manifestPath);
+  const originalManifestSignatureBytes = readFileSync(manifestSignaturePath);
+
+  // One-byte manifest tamper must fail at the producer-manifest signature.
+  const manifestTampered = Buffer.from(originalManifestBytes);
+  manifestTampered[manifestTampered.length - 2] ^= 1;
+  writeFileSync(manifestPath, manifestTampered);
+  const manifestTamperResult = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+  );
+  if (manifestTamperResult.status === 0) {
+    throw new Error("Expected producer manifest byte tampering to fail");
+  }
+  const manifestTamperRejected = JSON.parse(manifestTamperResult.stdout);
+  if (
+    manifestTamperRejected.assertions.producer_manifest_signature_valid !== false
+  ) {
+    throw new Error("Verifier did not identify producer manifest signature tampering");
+  }
+  writeFileSync(manifestPath, originalManifestBytes);
+
+  // A manifest signed by the correct key but copied/rewritten for another
+  // response must still fail semantic transaction binding.
+  const crossTransactionManifest = {
+    ...manifest,
+    response_id: "resp_other_transaction",
+  };
+  const crossBytes = deterministicJsonBytes(crossTransactionManifest);
+  const crossPreimage = Buffer.concat([
+    Buffer.from(manifestDomain + "\0", "utf8"),
+    crossBytes,
+  ]);
+  const crossEnvelope = {
+    ...manifestSignatureEnvelope,
+    manifest_sha256: sha256(crossBytes),
+    preimage_sha256: sha256(crossPreimage),
+    signature_b64: sign(null, crossPreimage, privateKey).toString("base64"),
+  };
+  writeFileSync(manifestPath, crossBytes);
+  writeFileSync(
+    manifestSignaturePath,
+    JSON.stringify(crossEnvelope, null, 2) + "\n",
+    "utf8",
+  );
+  const crossTransaction = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+  );
+  if (crossTransaction.status === 0) {
+    throw new Error("Expected cross-transaction producer manifest to fail");
+  }
+  const crossRejected = JSON.parse(crossTransaction.stdout);
+  if (
+    crossRejected.assertions.producer_manifest_transaction_binding !== false
+  ) {
+    throw new Error("Verifier did not reject cross-transaction producer manifest");
+  }
+  writeFileSync(manifestPath, originalManifestBytes);
+  writeFileSync(manifestSignaturePath, originalManifestSignatureBytes);
+
+  rmSync(manifestSignaturePath);
+  const strippedManifestSignature = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    publicKeyPath,
+  );
+  if (strippedManifestSignature.status === 0) {
+    throw new Error("Expected stripped producer manifest signature to fail");
+  }
+  writeFileSync(manifestSignaturePath, originalManifestSignatureBytes);
 
   const originalSignatureBytes = readFileSync(fixtureSignaturePath);
   signatureEnvelope.signature_b64 =
