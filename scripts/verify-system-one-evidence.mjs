@@ -837,6 +837,10 @@ const assertions = {
   evidence_signature_report_hash_matches:
     !evidenceSignatureRequired ||
     evidenceSignatureVerification?.reportSha256 === sha256File(reportPath),
+  signature_trust_domains_use_distinct_keys:
+    !evidenceSignatureRequired ||
+    !signatureEvidencePresent ||
+    expectedEvidenceKeyId !== expectedProducerKeyId,
   report_heads_are_git_shas:
     isGitSha(report.local_studio_head) && isGitSha(report.my_jev_head),
   capture_source_checkouts_clean:
