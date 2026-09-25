@@ -24,6 +24,10 @@ import {
   requireAbsolutePythonForTrustedProducer,
   runIsolatedPythonModule,
 } from "./system-one-python-launch.mjs";
+import {
+  readTrustedKeyStore,
+  requireTrustedKey,
+} from "./system-one-trusted-keys.mjs";
 
 const EVIDENCE_SIGNATURE_SCHEMA =
   "local-studio-system-one-acceptance-signature-v1";
@@ -86,6 +90,7 @@ function loadEvidenceSigningKey(path) {
   return {
     key,
     keyId: `ed25519:${sha256(der)}`,
+    publicKeySha256: sha256(der),
   };
 }
 
@@ -632,6 +637,10 @@ const evidenceSigningKeyPath = args.get("evidence-signing-key")
   ? resolve(args.get("evidence-signing-key"))
   : null;
 const expectedEvidenceKeyId = args.get("expected-evidence-key-id")?.trim() || null;
+const trustedKeysPath = args.get("trusted-keys")
+  ? resolve(args.get("trusted-keys"))
+  : null;
+const trustedKeyStore = readTrustedKeyStore(trustedKeysPath);
 const localStudioHeadBefore = requireCleanGitCheckout(
   localStudioRoot,
   "Local Studio",
@@ -999,6 +1008,16 @@ if (producerMode === "fixture") {
       producerDir,
     });
 
+    if (trustedKeyStore) {
+      requireTrustedKey({
+        store: trustedKeyStore,
+        role: "producer",
+        keyId: expectedProducerKeyId,
+        publicKeySha256: verificationKey.publicKeySha256,
+        at: manifest.compiled_at,
+      });
+    }
+
     if (
       responseSignature.key_id !== manifestSignature.key_id ||
       manifest.producer_key_id !== responseSignature.key_id
@@ -1308,6 +1327,15 @@ if (evidenceSigningKeyPath) {
       "Evidence signing key does not match --expected-evidence-key-id",
     );
   }
+  if (trustedKeyStore) {
+    requireTrustedKey({
+      store: trustedKeyStore,
+      role: "consumer_evidence",
+      keyId: expectedEvidenceKeyId,
+      publicKeySha256: evidenceSigningKey.publicKeySha256,
+      at: report.generated_at,
+    });
+  }
   evidenceSignature = signAcceptanceReport(reportRaw, evidenceSigningKey);
   evidenceSignaturePath = `${reportPath}.sig.json`;
   writeFileSync(
@@ -1324,6 +1352,8 @@ process.stdout.write(
       report_path: reportPath,
       evidence_signature_path: evidenceSignaturePath,
       evidence_signature: evidenceSignature,
+      trusted_key_store_path: trustedKeysPath,
+      trusted_key_store_sha256: trustedKeyStore?.sha256 ?? null,
     },
     null,
     2,
