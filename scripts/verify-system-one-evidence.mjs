@@ -738,17 +738,6 @@ const replayInfluence = replayRows.filter((row) =>
   INFLUENCE_OUTCOMES.has(row?.outcome),
 );
 const reportedRows = [...rows, ...replayRows];
-const ledgerRowsForReceipt = checkpointRows.filter(
-  (row) => row?.receipt_id === report.receipt_id,
-);
-const ledgerInfluenceForReceipt = ledgerRowsForReceipt.filter((row) =>
-  INFLUENCE_OUTCOMES.has(row?.outcome),
-);
-const ledgerReplayRejected = ledgerRowsForReceipt.filter(
-  (row) =>
-    row?.outcome === "ignored" &&
-    row?.reason === "replay_already_consumed",
-);
 const checkpointBytes = Number(report?.ledger_checkpoint?.bytes);
 const ledgerCheckpointPrefix =
   Number.isInteger(checkpointBytes) &&
@@ -760,6 +749,17 @@ const checkpointRows =
   ledgerCheckpointPrefix !== null
     ? parseJsonLinesBytes(ledgerCheckpointPrefix, "Ledger checkpoint")
     : [];
+const ledgerRowsForReceipt = checkpointRows.filter(
+  (row) => row?.receipt_id === report.receipt_id,
+);
+const ledgerInfluenceForReceipt = ledgerRowsForReceipt.filter((row) =>
+  INFLUENCE_OUTCOMES.has(row?.outcome),
+);
+const ledgerReplayRejected = ledgerRowsForReceipt.filter(
+  (row) =>
+    row?.outcome === "ignored" &&
+    row?.reason === "replay_already_consumed",
+);
 const canarySha = sha256(report.task_focus_canary ?? "");
 const expectedLocalHead = required(args, "expected-local-head");
 const expectedMyJevHead = required(args, "expected-my-jev-head");
