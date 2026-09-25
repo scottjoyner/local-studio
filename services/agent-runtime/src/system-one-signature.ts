@@ -69,6 +69,15 @@ function loadPolicy(env: NodeJS.ProcessEnv): SignaturePolicy {
     return { mode: "invalid", reason: "signature_policy_invalid" };
   }
 
+  const expectedKeyId =
+    env.LOCAL_STUDIO_SYSTEM_ONE_EXPECTED_KEY_ID?.trim() || "";
+  if (
+    expectedKeyId &&
+    !/^ed25519:[0-9a-f]{64}$/.test(expectedKeyId)
+  ) {
+    return { mode: "invalid", reason: "signature_expected_key_id_invalid" };
+  }
+
   const keyPath =
     env.LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH?.trim() || "";
   if (!keyPath) {
@@ -94,10 +103,14 @@ function loadPolicy(env: NodeJS.ProcessEnv): SignaturePolicy {
       return { mode: "invalid", reason: "signature_key_not_ed25519" };
     }
     const der = key.export({ type: "spki", format: "der" }) as Buffer;
+    const keyId = `ed25519:${sha256(der)}`;
+    if (expectedKeyId && expectedKeyId !== keyId) {
+      return { mode: "invalid", reason: "signature_expected_key_id_mismatch" };
+    }
     return {
       mode: "required",
       key,
-      keyId: `ed25519:${sha256(der)}`,
+      keyId,
       publicKeySha256: sha256(der),
     };
   } catch {
