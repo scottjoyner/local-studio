@@ -37,6 +37,12 @@ const SYSTEMONE_CONFIG_SHA256 =
   "459cc500b481878aa1445a6176bb8a6b61db51981696afcc6dd65f9fe3700f4e";
 const SIGNATURE_SCHEMA = "hermes-system-one-detached-signature-v1";
 const SIGNATURE_DOMAIN = "hermes-system-one-uhp-response-bytes-ed25519-v1";
+const PRODUCER_MANIFEST_SCHEMA =
+  "hermes-system-one-producer-evidence-manifest-v1";
+const PRODUCER_MANIFEST_SIGNATURE_SCHEMA =
+  "hermes-system-one-producer-evidence-signature-v1";
+const PRODUCER_MANIFEST_SIGNATURE_DOMAIN =
+  "hermes-system-one-producer-evidence-manifest-ed25519-v1";
 const EVIDENCE_SIGNATURE_SCHEMA =
   "local-studio-system-one-acceptance-signature-v1";
 const EVIDENCE_SIGNATURE_DOMAIN =
@@ -429,6 +435,96 @@ function verifyDetachedResponseSignature(responsePath, signaturePath, verificati
   };
 }
 
+function verifyDetachedProducerManifestSignature(
+  manifestPath,
+  signaturePath,
+  verificationKey,
+) {
+  if (!verificationKey || !existsSync(signaturePath)) {
+    return {
+      valid: false,
+      reason: !verificationKey ? "public_key_missing" : "signature_file_missing",
+    };
+  }
+
+  let envelope;
+  try {
+    envelope = readJson(signaturePath);
+  } catch {
+    return { valid: false, reason: "signature_invalid_json" };
+  }
+  const expectedKeys = [
+    "schema",
+    "scheme",
+    "domain",
+    "key_id",
+    "manifest_sha256",
+    "preimage_sha256",
+    "signature_b64",
+  ];
+  if (
+    envelope === null ||
+    typeof envelope !== "object" ||
+    Array.isArray(envelope) ||
+    !sameStrings(Object.keys(envelope), expectedKeys)
+  ) {
+    return { valid: false, reason: "signature_shape_mismatch" };
+  }
+  if (
+    envelope.schema !== PRODUCER_MANIFEST_SIGNATURE_SCHEMA ||
+    envelope.scheme !== "ed25519" ||
+    envelope.domain !== PRODUCER_MANIFEST_SIGNATURE_DOMAIN
+  ) {
+    return { valid: false, reason: "signature_metadata_mismatch" };
+  }
+  if (envelope.key_id !== verificationKey.keyId) {
+    return { valid: false, reason: "signature_key_id_mismatch" };
+  }
+
+  const manifestBytes = readFileSync(manifestPath);
+  const manifestSha256 = sha256(manifestBytes);
+  if (envelope.manifest_sha256 !== manifestSha256) {
+    return { valid: false, reason: "signature_manifest_hash_mismatch" };
+  }
+  const preimage = Buffer.concat([
+    Buffer.from(PRODUCER_MANIFEST_SIGNATURE_DOMAIN + "\0", "utf8"),
+    manifestBytes,
+  ]);
+  const preimageSha256 = sha256(preimage);
+  if (envelope.preimage_sha256 !== preimageSha256) {
+    return { valid: false, reason: "signature_preimage_hash_mismatch" };
+  }
+
+  const encoded =
+    typeof envelope.signature_b64 === "string" ? envelope.signature_b64 : "";
+  if (
+    encoded.length === 0 ||
+    encoded.length > 128 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    return { valid: false, reason: "signature_encoding_invalid" };
+  }
+  const signature = Buffer.from(encoded, "base64");
+  if (
+    signature.length !== 64 ||
+    signature.toString("base64") !== encoded ||
+    !verifySignature(null, preimage, verificationKey.key, signature)
+  ) {
+    return { valid: false, reason: "signature_invalid" };
+  }
+
+  return {
+    valid: true,
+    reason: null,
+    envelope,
+    manifestSha256,
+    preimageSha256,
+    keyId: verificationKey.keyId,
+    publicKeySha256: verificationKey.publicKeySha256,
+    signatureFileSha256: sha256File(signaturePath),
+  };
+}
+
 function consumeMarkerPath(systemOneDir, piSessionId, receiptId) {
   const key = sha256(piSessionId + "\0" + receiptId);
   return join(systemOneDir, "consumed", key + ".json");
@@ -459,7 +555,13 @@ function producerFileExists(path) {
   }
 }
 
-function verifyProducer(report, systemOneDir, fixtureSha) {
+function verifyProducer(
+  report,
+  systemOneDir,
+  fixtureSha,
+  verificationKey,
+  expectedProducerKeyId,
+) {
   if (report.producer_mode !== "harnessrouter-script") {
     return {
       assertions: {
@@ -486,10 +588,21 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   const storedResponsePath = join(producerDir, "stored-uhp-response.json");
   const sourceSnapshotPath = join(producerDir, "source-heartbeat-snapshot.json");
   const signaturePath = join(producerDir, "stored-uhp-response.json.sig.json");
+  const manifestPath = join(producerDir, "producer-evidence-manifest.json");
+  const manifestSignaturePath = join(
+    producerDir,
+    "producer-evidence-manifest.json.sig.json",
+  );
   const configPath = join(producerDir, "package", "config.yaml");
   const producerSignaturePresent =
     producerFileExists(signaturePath) ||
     report.producer_signature_required === true;
+  const producerManifestPresent =
+    producerFileExists(manifestPath) ||
+    producerFileExists(manifestSignaturePath) ||
+    report.producer_evidence_manifest_verified === true ||
+    report.producer_evidence_manifest_sha256 != null ||
+    report.producer_evidence_manifest_signature_sha256 != null;
   const paths = [
     [producerReportPath, "HarnessRouter producer report"],
     [recommendationPath, "HarnessRouter recommendation"],
@@ -499,6 +612,12 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
     [configPath, "HarnessRouter System-One config"],
     ...(producerSignaturePresent
       ? [[signaturePath, "HarnessRouter detached signature"]]
+      : []),
+    ...(producerManifestPresent
+      ? [
+          [manifestPath, "HarnessRouter producer provenance manifest"],
+          [manifestSignaturePath, "HarnessRouter producer provenance signature"],
+        ]
       : []),
   ];
   try {
@@ -517,6 +636,14 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
   const trace = readJson(tracePath);
   const stored = readJson(storedResponsePath);
   const sourceSnapshot = readJson(sourceSnapshotPath);
+  const producerManifest = producerManifestPresent ? readJson(manifestPath) : null;
+  const producerManifestSignatureVerification = producerManifestPresent
+    ? verifyDetachedProducerManifestSignature(
+        manifestPath,
+        manifestSignaturePath,
+        verificationKey,
+      )
+    : null;
   const profile = stored?.metadata?.hermes_system_one;
   const recommendSteps = Array.isArray(trace?.steps)
     ? trace.steps.filter((step) => step?.action === "recommend")
@@ -592,6 +719,145 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
           producer.producer_signature_file_sha256 === sha256File(signaturePath) &&
           producer.producer_signature?.response_sha256 === fixtureSha
         ),
+      producer_manifest_required_when_response_signed:
+        !producerSignaturePresent || producerManifestPresent,
+      producer_manifest_signature_valid:
+        !producerManifestPresent ||
+        (
+          producerManifestSignatureVerification?.valid === true &&
+          producerManifestSignatureVerification?.keyId === expectedProducerKeyId
+        ),
+      producer_manifest_report_binding:
+        !producerManifestPresent ||
+        (
+          report.producer_evidence_manifest_verified === true &&
+          report.producer_evidence_manifest_sha256 === sha256File(manifestPath) &&
+          report.producer_evidence_manifest_signature_sha256 ===
+            sha256File(manifestSignaturePath) &&
+          report.producer_evidence_manifest_key_id === expectedProducerKeyId
+        ),
+      producer_manifest_exact_shape:
+        !producerManifestPresent ||
+        sameStrings(Object.keys(producerManifest ?? {}), [
+          "schema",
+          "response_id",
+          "receipt_id",
+          "consumer_session_id",
+          "project_fingerprint",
+          "snapshot_sha256",
+          "stored_response_sha256",
+          "stored_response_signature_sha256",
+          "producer_key_id",
+          "source_snapshot_raw_sha256",
+          "source_snapshot_canonical_sha256",
+          "recommendation_sha256",
+          "trace_sha256",
+          "systemone_config_sha256",
+          "my_jev_head",
+          "harnessrouter_head",
+          "harnessrouter_driver_git_blob_sha1",
+          "systemone_provider_git_blob_sha1",
+          "systemone_package_manifest_sha256",
+          "producer_python",
+          "heartbeat_mcp_python",
+          "sanitized_environment",
+          "compiled_at",
+          "receipt_expires_at",
+          "authority",
+        ]),
+      producer_manifest_transaction_binding:
+        !producerManifestPresent ||
+        (
+          producerManifest?.schema === PRODUCER_MANIFEST_SCHEMA &&
+          producerManifest?.response_id === report.response_id &&
+          producerManifest?.receipt_id === report.receipt_id &&
+          producerManifest?.consumer_session_id === report.pi_session_id &&
+          producerManifest?.project_fingerprint === report.project_fingerprint &&
+          producerManifest?.snapshot_sha256 === report.snapshot_sha256 &&
+          producerManifest?.producer_key_id === expectedProducerKeyId
+        ),
+      producer_manifest_response_hashes:
+        !producerManifestPresent ||
+        (
+          producerManifest?.stored_response_sha256 === sha256File(storedResponsePath) &&
+          producerManifest?.stored_response_signature_sha256 ===
+            sha256File(signaturePath)
+        ),
+      producer_manifest_artifact_hashes:
+        !producerManifestPresent ||
+        (
+          producerManifest?.source_snapshot_raw_sha256 ===
+            sha256File(sourceSnapshotPath) &&
+          producerManifest?.source_snapshot_canonical_sha256 ===
+            report.snapshot_sha256 &&
+          producerManifest?.recommendation_sha256 ===
+            sha256File(recommendationPath) &&
+          producerManifest?.trace_sha256 === sha256File(tracePath) &&
+          producerManifest?.systemone_config_sha256 === sha256File(configPath)
+        ),
+      producer_manifest_implementation_binding:
+        !producerManifestPresent ||
+        (
+          producerManifest?.my_jev_head === report.my_jev_head &&
+          producerManifest?.harnessrouter_head === HARNESSROUTER_HEAD &&
+          producerManifest?.harnessrouter_driver_git_blob_sha1 ===
+            HARNESSROUTER_DRIVER_BLOB_SHA1 &&
+          producerManifest?.systemone_provider_git_blob_sha1 ===
+            SYSTEMONE_PROVIDER_BLOB_SHA1 &&
+          producerManifest?.systemone_package_manifest_sha256 ===
+            SYSTEMONE_PACKAGE_MANIFEST_SHA256
+        ),
+      producer_manifest_python_binding:
+        !producerManifestPresent ||
+        (
+          sameStrings(Object.keys(producerManifest?.producer_python ?? {}), [
+            "executable_sha256",
+            "isolated",
+            "ignore_environment",
+            "no_site",
+          ]) &&
+          producerManifest?.producer_python?.executable_sha256 ===
+            producer?.harnessrouter_python?.executable_sha256 &&
+          producerManifest?.producer_python?.isolated === true &&
+          producerManifest?.producer_python?.ignore_environment === true &&
+          producerManifest?.producer_python?.no_site === true &&
+          sameStrings(Object.keys(producerManifest?.heartbeat_mcp_python ?? {}), [
+            "executable_sha256",
+            "isolated",
+            "ignore_environment",
+            "no_site",
+          ]) &&
+          producerManifest?.heartbeat_mcp_python?.executable_sha256 ===
+            producer?.heartbeat_mcp_python?.executable_sha256 &&
+          producerManifest?.heartbeat_mcp_python?.isolated === true &&
+          producerManifest?.heartbeat_mcp_python?.ignore_environment === true &&
+          producerManifest?.heartbeat_mcp_python?.no_site === true
+        ),
+      producer_manifest_environment_binding:
+        !producerManifestPresent ||
+        (
+          producerManifest?.sanitized_environment?.provider_credentials_present === false &&
+          producerManifest?.sanitized_environment?.startup_injection_present === false &&
+          sameStrings(
+            producerManifest?.sanitized_environment?.removed_keys ?? [],
+            [
+              ...(producer?.sanitized_environment_removed_keys ?? []),
+              ...(producer?.heartbeat_mcp_sanitized_environment_removed_keys ?? []),
+            ],
+          )
+        ),
+      producer_manifest_authority_all_false:
+        !producerManifestPresent ||
+        allAuthorityFalse(producerManifest?.authority),
+      producer_manifest_expiry_matches_receipt:
+        !producerManifestPresent ||
+        (
+          producerManifest?.receipt_expires_at === profile?.expires_at &&
+          Number.isFinite(Date.parse(producerManifest?.compiled_at ?? "")) &&
+          Number.isFinite(Date.parse(producerManifest?.receipt_expires_at ?? "")) &&
+          Date.parse(producerManifest.receipt_expires_at) >
+            Date.parse(producerManifest.compiled_at)
+        ),
       producer_script_model:
         producer?.result?.model === "script/s1" &&
         stored?.model === "script/s1",
@@ -634,6 +900,12 @@ function verifyProducer(report, systemOneDir, fixtureSha) {
       stored_response_sha256: sha256File(storedResponsePath),
       signature_sha256:
         producerSignaturePresent ? sha256File(signaturePath) : null,
+      producer_manifest_sha256:
+        producerManifestPresent ? sha256File(manifestPath) : null,
+      producer_manifest_signature_sha256:
+        producerManifestPresent ? sha256File(manifestSignaturePath) : null,
+      producer_manifest_signature_verification:
+        producerManifestSignatureVerification,
       source_snapshot_raw_sha256: sha256File(sourceSnapshotPath),
       source_snapshot_canonical_sha256: canonicalSha256(sourceSnapshot),
       systemone_config_sha256: sha256File(configPath),
@@ -1091,6 +1363,8 @@ const producer = verifyProducer(
   report,
   systemOneDir,
   fixtureSha,
+  verificationKey,
+  expectedProducerKeyId,
 );
 Object.assign(assertions, producer.assertions);
 Object.assign(assertions, {
@@ -1127,7 +1401,7 @@ const result = {
   fixture_signature_path: signatureEvidencePresent ? fixtureSignaturePath : null,
   fixture_signature_sha256:
     signatureVerification?.signatureFileSha256 ?? null,
-  producer_public_key_sha256: verificationKey?.rawSha256 ?? null,
+  producer_public_key_sha256: verificationKey?.publicKeySha256 ?? null,
   expected_producer_key_id: expectedProducerKeyId,
   signature_verification: signatureVerification,
   consume_marker_path: markerPath,
