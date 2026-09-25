@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 
-import { createHash, randomBytes } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  randomBytes,
+  sign as signSignature,
+} from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -12,6 +19,11 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const EVIDENCE_SIGNATURE_SCHEMA =
+  "local-studio-system-one-acceptance-signature-v1";
+const EVIDENCE_SIGNATURE_DOMAIN =
+  "local-studio-system-one-acceptance-report-bytes-ed25519-v1";
 
 const RUNTIME_PROVENANCE_FILES = [
   "services/agent-runtime/src/runtime-provenance.ts",
@@ -46,6 +58,47 @@ function required(args, name) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function loadEvidenceSigningKey(path) {
+  if (!path) return null;
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.size <= 0 || stat.size > 16 * 1024) {
+    throw new Error("Evidence signing key must be a bounded regular file");
+  }
+  if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) {
+    throw new Error(
+      "Evidence signing key must not be readable or writable by group/other",
+    );
+  }
+  const raw = readFileSync(path);
+  const key = createPrivateKey(raw);
+  if (key.asymmetricKeyType !== "ed25519") {
+    throw new Error("Evidence signing key must be Ed25519");
+  }
+  const publicKey = createPublicKey(key);
+  const der = publicKey.export({ type: "spki", format: "der" });
+  return {
+    key,
+    keyId: `ed25519:${sha256(der)}`,
+  };
+}
+
+function signAcceptanceReport(reportRaw, signingKey) {
+  const reportBytes = Buffer.from(reportRaw, "utf8");
+  const preimage = Buffer.concat([
+    Buffer.from(EVIDENCE_SIGNATURE_DOMAIN + "\0", "utf8"),
+    reportBytes,
+  ]);
+  return {
+    schema: EVIDENCE_SIGNATURE_SCHEMA,
+    scheme: "ed25519",
+    domain: EVIDENCE_SIGNATURE_DOMAIN,
+    key_id: signingKey.keyId,
+    report_sha256: sha256(reportBytes),
+    preimage_sha256: sha256(preimage),
+    signature_b64: signSignature(null, preimage, signingKey.key).toString("base64"),
+  };
 }
 
 function gitHead(cwd) {
@@ -265,6 +318,11 @@ const producerSigningKey = args.get("producer-signing-key")
   ? realpathSync(args.get("producer-signing-key"))
   : null;
 const expectedProducerKeyId = args.get("expected-producer-key-id")?.trim() || null;
+const evidenceSigningKeyPath = args.get("evidence-signing-key")
+  ? realpathSync(args.get("evidence-signing-key"))
+  : null;
+const expectedEvidenceKeyId = args.get("expected-evidence-key-id")?.trim() || null;
+const evidenceSigningKey = loadEvidenceSigningKey(evidenceSigningKeyPath);
 const localStudioHeadBefore = requireCleanGitCheckout(
   localStudioRoot,
   "Local Studio",
@@ -292,6 +350,22 @@ if (
   !/^ed25519:[0-9a-f]{64}$/.test(expectedProducerKeyId)
 ) {
   throw new Error("--expected-producer-key-id must be ed25519:<64 lowercase hex>");
+}
+if (Boolean(evidenceSigningKey) !== Boolean(expectedEvidenceKeyId)) {
+  throw new Error(
+    "--evidence-signing-key and --expected-evidence-key-id must be supplied together",
+  );
+}
+if (
+  expectedEvidenceKeyId &&
+  !/^ed25519:[0-9a-f]{64}$/.test(expectedEvidenceKeyId)
+) {
+  throw new Error("--expected-evidence-key-id must be ed25519:<64 lowercase hex>");
+}
+if (evidenceSigningKey && evidenceSigningKey.keyId !== expectedEvidenceKeyId) {
+  throw new Error(
+    "Evidence signing key does not match --expected-evidence-key-id",
+  );
 }
 
 if (!/^[0-9a-f]{64}$/.test(snapshotSha256)) {
@@ -746,6 +820,8 @@ const report = {
   runtime_provenance_sha256: sha256(JSON.stringify(runtimeProvenance)),
   source_checkouts_clean: true,
   source_heads_stable: true,
+  evidence_signature_required: Boolean(evidenceSigningKey),
+  expected_evidence_key_id: expectedEvidenceKeyId,
   producer_mode: producerMode,
   base_url: baseUrl.toString(),
   runtime_session_id: runtimeSessionId,
@@ -785,7 +861,32 @@ const report = {
 };
 
 const reportPath = join(systemOneDir, "acceptance", `${responseId}.json`);
-writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
-process.stdout.write(JSON.stringify({ ...report, report_path: reportPath }, null, 2) + "\n");
+const reportRaw = JSON.stringify(report, null, 2) + "\n";
+writeFileSync(reportPath, reportRaw, "utf8");
+
+let evidenceSignaturePath = null;
+let evidenceSignature = null;
+if (evidenceSigningKey) {
+  evidenceSignature = signAcceptanceReport(reportRaw, evidenceSigningKey);
+  evidenceSignaturePath = `${reportPath}.sig.json`;
+  writeFileSync(
+    evidenceSignaturePath,
+    JSON.stringify(evidenceSignature, null, 2) + "\n",
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
+process.stdout.write(
+  JSON.stringify(
+    {
+      ...report,
+      report_path: reportPath,
+      evidence_signature_path: evidenceSignaturePath,
+      evidence_signature: evidenceSignature,
+    },
+    null,
+    2,
+  ) + "\n",
+);
 
 if (verdict !== "pass") process.exitCode = 1;
