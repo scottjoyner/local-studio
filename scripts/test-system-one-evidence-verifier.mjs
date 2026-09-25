@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  sign,
+} from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -16,6 +20,11 @@ import { spawnSync } from "node:child_process";
 
 const CONTRACT_SHA256 =
   "5e88c73e7cbb2e46f3b5171951d2a84f0549633fbcb420458d56ae5ada0ffc8f";
+const EVIDENCE_SIGNATURE_SCHEMA =
+  "local-studio-system-one-acceptance-signature-v1";
+const EVIDENCE_SIGNATURE_DOMAIN =
+  "local-studio-system-one-acceptance-report-bytes-ed25519-v1";
+
 const AUTHORITY = {
   dispatch_allowed: false,
   approval_granted: false,
@@ -42,20 +51,32 @@ function canonicalSha256(value) {
   return sha256(JSON.stringify(canonicalize(value)));
 }
 
-function runVerifier(verifier, report, localHead, myJevHead) {
-  return spawnSync(
-    process.execPath,
-    [
-      verifier,
-      "--report",
-      report,
-      "--expected-local-head",
-      localHead,
-      "--expected-my-jev-head",
-      myJevHead,
-    ],
-    { encoding: "utf8" },
-  );
+function runVerifier(
+  verifier,
+  report,
+  localHead,
+  myJevHead,
+  evidencePublicKeyPath = null,
+  expectedEvidenceKeyId = null,
+) {
+  const args = [
+    verifier,
+    "--report",
+    report,
+    "--expected-local-head",
+    localHead,
+    "--expected-my-jev-head",
+    myJevHead,
+  ];
+  if (evidencePublicKeyPath || expectedEvidenceKeyId) {
+    args.push(
+      "--evidence-public-key",
+      evidencePublicKeyPath,
+      "--expected-evidence-key-id",
+      expectedEvidenceKeyId,
+    );
+  }
+  return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -377,6 +398,106 @@ try {
     modeRejected.assertions.producer_mode_matches_fixture_model !== false
   ) {
     throw new Error("Verifier did not reject producer-mode / served-model mismatch");
+  }
+
+  // Restore the coherent fixture report, then add a distinct consumer-evidence
+  // signature. These checks intentionally run after the unsigned invariant
+  // attacks above so a valid outer signature cannot mask missing inner coverage.
+  report.producer_mode = "fixture";
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const evidencePublicKeyPath = join(root, "acceptance-public.pem");
+  writeFileSync(
+    evidencePublicKeyPath,
+    publicKey.export({ type: "spki", format: "pem" }),
+  );
+  const evidenceDer = publicKey.export({ type: "spki", format: "der" });
+  const expectedEvidenceKeyId = "ed25519:" + sha256(evidenceDer);
+  report.evidence_signature_required = true;
+  report.expected_evidence_key_id = expectedEvidenceKeyId;
+
+  const signedReportRaw = JSON.stringify(report, null, 2) + "\n";
+  writeFileSync(reportPath, signedReportRaw, "utf8");
+  const evidencePreimage = Buffer.concat([
+    Buffer.from(EVIDENCE_SIGNATURE_DOMAIN + "\0", "utf8"),
+    Buffer.from(signedReportRaw, "utf8"),
+  ]);
+  const evidenceEnvelope = {
+    schema: EVIDENCE_SIGNATURE_SCHEMA,
+    scheme: "ed25519",
+    domain: EVIDENCE_SIGNATURE_DOMAIN,
+    key_id: expectedEvidenceKeyId,
+    report_sha256: sha256(Buffer.from(signedReportRaw, "utf8")),
+    preimage_sha256: sha256(evidencePreimage),
+    signature_b64: sign(null, evidencePreimage, privateKey).toString("base64"),
+  };
+  const evidenceSignaturePath = reportPath + ".sig.json";
+  writeFileSync(
+    evidenceSignaturePath,
+    JSON.stringify(evidenceEnvelope, null, 2) + "\n",
+    "utf8",
+  );
+
+  const signedValid = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+  );
+  if (signedValid.status !== 0) {
+    throw new Error(
+      "Expected signed acceptance evidence to pass:\n" +
+        (signedValid.stderr || signedValid.stdout),
+    );
+  }
+  const signedVerified = JSON.parse(signedValid.stdout);
+  if (
+    signedVerified.verdict !== "pass" ||
+    signedVerified.assertions.evidence_signature_cryptographically_valid !== true
+  ) {
+    throw new Error("Verifier did not authenticate signed acceptance evidence");
+  }
+
+  writeFileSync(
+    reportPath,
+    signedReportRaw.replace('"producer_mode": "fixture"', '"producer_mode": "tampered"'),
+    "utf8",
+  );
+  const signedTamper = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+  );
+  if (signedTamper.status === 0) {
+    throw new Error("Expected one-byte signed-report tampering to fail");
+  }
+  const signedTamperResult = JSON.parse(signedTamper.stdout);
+  if (
+    signedTamperResult.assertions.evidence_signature_cryptographically_valid !== false
+  ) {
+    throw new Error("Verifier did not identify signed-report tampering");
+  }
+
+  writeFileSync(reportPath, signedReportRaw, "utf8");
+  rmSync(evidenceSignaturePath);
+  const strippedSignature = runVerifier(
+    verifier,
+    reportPath,
+    localStudioHead,
+    myJevHead,
+    evidencePublicKeyPath,
+    expectedEvidenceKeyId,
+  );
+  if (strippedSignature.status === 0) {
+    throw new Error("Expected stripped acceptance signature to fail");
+  }
+  const strippedResult = JSON.parse(strippedSignature.stdout);
+  if (strippedResult.assertions.evidence_signature_file_present !== false) {
+    throw new Error("Verifier did not reject stripped acceptance signature");
   }
 
   process.stdout.write("System-One offline evidence verifier self-test passed.\n");
