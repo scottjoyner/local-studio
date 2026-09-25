@@ -232,7 +232,10 @@ function readVerificationKey(path) {
   requireFile(path, "Producer public key");
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 16 * 1024) {
-    throw new Error("Producer public key must be a bounded regular non-symlink file");
+    throw new Error("Verification public key must be a bounded regular non-symlink file");
+  }
+  if (process.platform !== "win32" && (stat.mode & 0o022) !== 0) {
+    throw new Error("Verification public key must not be group/other writable");
   }
   const raw = readFileSync(path);
   const key = createPublicKey(raw);
@@ -243,7 +246,7 @@ function readVerificationKey(path) {
   return {
     key,
     keyId: "ed25519:" + sha256(der),
-    rawSha256: sha256(raw),
+    publicKeySha256: sha256(der),
   };
 }
 
@@ -331,7 +334,7 @@ function verifyDetachedAcceptanceSignature(
   return {
     valid: true,
     keyId: verificationKey.keyId,
-    publicKeySha256: verificationKey.rawSha256,
+    publicKeySha256: verificationKey.publicKeySha256,
     reportSha256,
     preimageSha256,
     signatureFileSha256: sha256File(signaturePath),
@@ -421,7 +424,7 @@ function verifyDetachedResponseSignature(responsePath, signaturePath, verificati
     responseSha256,
     preimageSha256,
     keyId: verificationKey.keyId,
-    publicKeySha256: verificationKey.rawSha256,
+    publicKeySha256: verificationKey.publicKeySha256,
     signatureFileSha256: sha256File(signaturePath),
   };
 }
@@ -1115,7 +1118,7 @@ const result = {
   acceptance_signature_sha256:
     evidenceSignatureVerification?.signatureFileSha256 ?? null,
   evidence_public_key_sha256:
-    evidenceVerificationKey?.rawSha256 ?? null,
+    evidenceVerificationKey?.publicKeySha256 ?? null,
   expected_evidence_key_id: expectedEvidenceKeyId,
   evidence_signature_verification: evidenceSignatureVerification,
   system_one_dir: systemOneDir,
