@@ -96,6 +96,53 @@ describe("System-One detached signature policy", () => {
     });
   });
 
+  test("accepts a separately pinned expected key id", () => {
+    withPublicKey(({ publicKeyPath, privateKey, publicKey }) => {
+      const raw = '{"id":"resp_signed","model":"script/s1"}\n';
+      const der = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+      const verifier = createSystemOneSignatureVerifier({
+        LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH: publicKeyPath,
+        LOCAL_STUDIO_SYSTEM_ONE_EXPECTED_KEY_ID: `ed25519:${sha256(der)}`,
+      });
+      expect(
+        verifier(raw, signedEnvelope(raw, privateKey, publicKey)).outcome,
+      ).toBe("verified");
+    });
+  });
+
+  test("fails closed when the public key no longer matches the pinned key id", () => {
+    withPublicKey(({ publicKeyPath }) => {
+      withPublicKey(({ publicKey: expectedKey }) => {
+        const expectedDer = expectedKey.export({
+          type: "spki",
+          format: "der",
+        }) as Buffer;
+        const verifier = createSystemOneSignatureVerifier({
+          LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH: publicKeyPath,
+          LOCAL_STUDIO_SYSTEM_ONE_EXPECTED_KEY_ID:
+            `ed25519:${sha256(expectedDer)}`,
+        });
+        expect(verifier('{"id":"resp_signed"}\n', null)).toEqual({
+          outcome: "rejected",
+          reason: "signature_expected_key_id_mismatch",
+        });
+      });
+    });
+  });
+
+  test("rejects malformed expected key id configuration", () => {
+    withPublicKey(({ publicKeyPath }) => {
+      const verifier = createSystemOneSignatureVerifier({
+        LOCAL_STUDIO_SYSTEM_ONE_PUBLIC_KEY_PATH: publicKeyPath,
+        LOCAL_STUDIO_SYSTEM_ONE_EXPECTED_KEY_ID: "ed25519:not-a-hash",
+      });
+      expect(verifier('{"id":"resp_signed"}\n', null)).toEqual({
+        outcome: "rejected",
+        reason: "signature_expected_key_id_invalid",
+      });
+    });
+  });
+
   test("rejects wrong verification key", () => {
     withPublicKey(({ privateKey, publicKey }) => {
       withPublicKey(({ publicKeyPath }) => {
