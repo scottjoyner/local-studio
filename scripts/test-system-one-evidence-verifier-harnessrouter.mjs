@@ -394,6 +394,7 @@ try {
     compiled_at: "2026-09-24T12:00:30Z",
     receipt_expires_at: "2026-09-24T12:05:00Z",
     authority: AUTHORITY,
+    assistx_execution_policy: null,
   };
   const manifestPath = join(producerDir, "producer-evidence-manifest.json");
   const manifestBytes = deterministicJsonBytes(manifest);
@@ -891,8 +892,9 @@ try {
   writeFileSync(manifestSignaturePath, originalManifestSignatureBytes);
 
   const originalSignatureBytes = readFileSync(fixtureSignaturePath);
-  signatureEnvelope.signature_b64 =
-    "A" + signatureEnvelope.signature_b64.slice(1);
+  const signatureBytes = Buffer.from(signatureEnvelope.signature_b64, "base64");
+  signatureBytes[0] ^= 0x01;
+  signatureEnvelope.signature_b64 = signatureBytes.toString("base64");
   writeFileSync(
     fixtureSignaturePath,
     JSON.stringify(signatureEnvelope, null, 2) + "\n",
