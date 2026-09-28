@@ -266,6 +266,7 @@ function requireProducerManifestSemantics({
     "compiled_at",
     "receipt_expires_at",
     "authority",
+    "assistx_execution_policy",
   ];
   if (!exactKeys(manifest, topKeys)) {
     throw new Error("Producer evidence manifest shape mismatch");
@@ -401,6 +402,34 @@ function requireProducerManifestSemantics({
   ) {
     throw new Error("Producer evidence manifest authority widened");
   }
+  if (expected.assistxLineage) {
+    const lineage = manifest.assistx_execution_policy;
+    if (
+      !exactKeys(lineage, [
+        "producer_repository",
+        "producer_git_sha",
+        "bundle_sha256",
+        "import_receipt_sha256",
+        "checkpoint_sha256",
+        "heldout_evaluation_sha256",
+        "evidence_only",
+        "authority",
+      ]) ||
+      lineage.producer_repository !== "scottjoyner/auto-assist" ||
+      lineage.producer_git_sha !== expected.assistxLineage.producer_git_sha ||
+      lineage.bundle_sha256 !== expected.assistxLineage.bundle_sha256 ||
+      lineage.import_receipt_sha256 !== expected.assistxLineage.import_receipt_sha256 ||
+      lineage.checkpoint_sha256 !== expected.assistxLineage.checkpoint_sha256 ||
+      lineage.heldout_evaluation_sha256 !== expected.assistxLineage.heldout_evaluation_sha256 ||
+      lineage.evidence_only !== true ||
+      !allAuthorityFalse(lineage.authority)
+    ) {
+      throw new Error("Signed AssistX execution-policy lineage mismatch");
+    }
+  } else if (manifest.assistx_execution_policy !== null) {
+    throw new Error("Unexpected AssistX execution-policy lineage");
+  }
+
   if (
     typeof manifest.compiled_at !== "string" ||
     typeof manifest.receipt_expires_at !== "string" ||
@@ -633,6 +662,37 @@ const producerPublicKeyPath = args.get("producer-public-key")
   ? resolve(args.get("producer-public-key"))
   : null;
 const expectedProducerKeyId = args.get("expected-producer-key-id")?.trim() || null;
+const assistxLineagePath = args.get("assistx-lineage")
+  ? realpathSync(args.get("assistx-lineage"))
+  : null;
+let expectedAssistxLineage = null;
+if (assistxLineagePath) {
+  expectedAssistxLineage = JSON.parse(readFileSync(assistxLineagePath, "utf8"));
+  const sha40 = /^[0-9a-f]{40}$/;
+  const sha64 = /^[0-9a-f]{64}$/;
+  if (
+    !exactKeys(expectedAssistxLineage, [
+      "producer_repository",
+      "producer_git_sha",
+      "bundle_sha256",
+      "import_receipt_sha256",
+      "checkpoint_sha256",
+      "heldout_evaluation_sha256",
+      "evidence_only",
+      "authority",
+    ]) ||
+    expectedAssistxLineage.producer_repository !== "scottjoyner/auto-assist" ||
+    !sha40.test(expectedAssistxLineage.producer_git_sha ?? "") ||
+    !sha64.test(expectedAssistxLineage.bundle_sha256 ?? "") ||
+    !sha64.test(expectedAssistxLineage.import_receipt_sha256 ?? "") ||
+    !sha64.test(expectedAssistxLineage.checkpoint_sha256 ?? "") ||
+    !sha64.test(expectedAssistxLineage.heldout_evaluation_sha256 ?? "") ||
+    expectedAssistxLineage.evidence_only !== true ||
+    !allAuthorityFalse(expectedAssistxLineage.authority)
+  ) {
+    throw new Error("--assistx-lineage must be strict, hash-bound, evidence-only, and all-false authority");
+  }
+}
 const evidenceSigningKeyPath = args.get("evidence-signing-key")
   ? resolve(args.get("evidence-signing-key"))
   : null;
@@ -887,6 +947,7 @@ if (producerMode === "fixture") {
     "--task-focus",
     canary,
     ...(producerSigningKey ? ["--signing-key", producerSigningKey] : []),
+    ...(assistxLineagePath ? ["--assistx-lineage", assistxLineagePath] : []),
   ];
   producer = runIsolatedPythonModule({
     python,
@@ -1008,6 +1069,7 @@ if (producerMode === "fixture") {
         responseSha256,
         responseSignatureSha256,
         myJevHead: myJevHeadBefore,
+        assistxLineage: expectedAssistxLineage,
       },
       producerEvidence,
       producerDir,
