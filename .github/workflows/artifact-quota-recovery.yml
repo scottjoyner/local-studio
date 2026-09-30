@@ -1,0 +1,76 @@
+name: Recover Actions Artifact Capacity
+
+on:
+  push:
+    branches:
+      - ops/artifact-quota-recovery
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prune:
+    name: Delete two superseded PR3 arm64 artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify and delete exact superseded artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ["REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+
+          expected = {
+              10974365400: "local-studio-fa40ec49bc80115f425404bf463ac0ec971030c7-arm64",
+              10877577986: "local-studio-1a79c39f883c71b3c090f27d1340e6f529dd5cb6-arm64",
+          }
+
+          def request(url, method="GET"):
+              req = urllib.request.Request(
+                  url,
+                  method=method,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "local-studio-artifact-quota-recovery",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  if response.status == 204:
+                      return None
+                  return json.load(response)
+
+          freed = 0
+          for artifact_id, expected_name in expected.items():
+              artifact = request(
+                  f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}"
+              )
+              actual_name = artifact.get("name")
+              if actual_name != expected_name:
+                  raise SystemExit(
+                      f"refusing deletion: artifact {artifact_id} is {actual_name!r}, "
+                      f"expected {expected_name!r}"
+                  )
+              size = int(artifact.get("size_in_bytes", 0))
+              print(f"DELETE {artifact_id}\t{size}\t{actual_name}")
+              request(
+                  f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}",
+                  method="DELETE",
+              )
+              freed += size
+
+          print(f"deleted_count={len(expected)}")
+          print(f"deleted_bytes={freed}")
+          print("preserved_current_pr3_artifact=10980041670")
+          PY
