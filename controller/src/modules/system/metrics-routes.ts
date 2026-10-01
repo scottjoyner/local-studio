@@ -66,9 +66,10 @@ const buildCurrentMetrics = (
       vram_used_gb: Math.round(vramUsedGb * 10) / 10,
       vram_capacity_gb: Math.round(vramCapacityGb * 10) / 10,
       power_limit_watts: Math.round(powerLimitWatts),
+      instance_count: (yield* context.bridge.runningInstances()).length,
     };
 
-    const scrape = yield* scrapeEngineMetrics(context.config.inference_port, 1500);
+    const scrape = yield* scrapeEngineMetrics(current?.port ?? context.config.inference_port, 1500);
     const engineActive = scrape.hasVllm || scrape.hasSglang || scrape.hasLlamacpp;
 
     if (!current && !engineActive) {

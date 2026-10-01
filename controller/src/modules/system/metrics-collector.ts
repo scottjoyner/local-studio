@@ -54,11 +54,20 @@ export const startMetricsCollector = (context: AppContext): Effect.Effect<never>
       METRICS_LIFETIME_UPTIME_INCREMENT_SECONDS,
     );
 
+    const instances = yield* context.bridge.runningInstances();
     yield* context.eventManager.publishStatus({
       running: Boolean(current),
       process: current,
       inference_port: context.config.inference_port,
       launching: context.bridge.launchingRecipeId(),
+      instance_count: instances.length,
+      instances: instances.map((info) => ({
+        port: info.port,
+        pid: info.pid,
+        backend: info.backend,
+        served_model_name: info.served_model_name,
+        model_path: info.model_path,
+      })),
     });
     yield* context.eventManager.publishGpu(gpuList.map((gpu) => ({ ...gpu })));
 
@@ -140,7 +149,7 @@ export const startMetricsCollector = (context: AppContext): Effect.Effect<never>
         current.backend === "sglang" ||
         current.backend === "llamacpp"
       ) {
-        const vllmMetrics = yield* scrapeVllmMetrics(context.config.inference_port);
+        const vllmMetrics = yield* scrapeVllmMetrics(current.port);
         const now = Date.now() / 1000;
         const elapsed =
           lastMetricsTime > 0 ? now - lastMetricsTime : METRICS_LIFETIME_UPTIME_INCREMENT_SECONDS;
