@@ -9,6 +9,7 @@ import { getGpuInfo } from "./platform/gpu";
 import { fetchInference } from "../../http/local-fetch";
 import type { UsageAggregate } from "../../stores/inference-request-store";
 import {
+  LLAMACPP_METRIC_NAMES,
   SGLANG_METRIC_NAMES,
   VLLM_METRIC_NAMES,
   scrapeEngineMetrics,
@@ -82,13 +83,18 @@ const buildCurrentMetrics = (
     }
 
     const isSglang = current?.backend === "sglang" || (!current && scrape.hasSglang);
+    const isLlamacpp = current?.backend === "llamacpp" || (!current && scrape.hasLlamacpp);
     const modelId =
       current?.served_model_name ??
       current?.model_path?.split("/").pop() ??
       scrape.modelName ??
       "active";
     const prometheus = scrape.metrics;
-    const names = isSglang ? SGLANG_METRIC_NAMES : VLLM_METRIC_NAMES;
+    const names = isLlamacpp
+      ? LLAMACPP_METRIC_NAMES
+      : isSglang
+        ? SGLANG_METRIC_NAMES
+        : VLLM_METRIC_NAMES;
     const usageAggregate: UsageAggregate | null =
       yield* context.stores.inferenceRequestStore.aggregateEffect(
         buildModelKeys(modelId, current?.model_path),
