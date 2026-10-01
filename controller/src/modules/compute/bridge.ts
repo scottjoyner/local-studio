@@ -48,6 +48,7 @@ export interface ComputeBridge {
   readonly resolveInferenceTarget: (
     modelName?: string | null,
   ) => Effect.Effect<InferenceTarget>;
+  readonly runningInstances: () => Effect.Effect<ProcessInfo[]>;
   readonly findInferenceProcess: (
     modelName?: string | null,
   ) => Effect.Effect<ProcessInfo | null>;
@@ -330,6 +331,12 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
       return { process, runningCount: process ? 1 : 0, ambiguous: false };
     });
 
+  const runningInstances = (): Effect.Effect<ProcessInfo[]> =>
+    runningRecords().pipe(
+      Effect.flatMap((records) => Effect.forEach(records, (record) => processInfoFor(record))),
+      Effect.map((infos) => infos.filter((info): info is ProcessInfo => info !== null)),
+    );
+
   const findInferenceProcess = (
     modelName?: string | null,
   ): Effect.Effect<ProcessInfo | null> =>
@@ -382,6 +389,7 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
 
   return {
     resolveInferenceTarget,
+    runningInstances,
     findInferenceProcess,
     getCurrentRecipe,
     launchingRecipeId,

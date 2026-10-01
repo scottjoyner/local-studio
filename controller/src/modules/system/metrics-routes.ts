@@ -9,6 +9,7 @@ import { getGpuInfo } from "./platform/gpu";
 import { fetchInference } from "../../http/local-fetch";
 import type { UsageAggregate } from "../../stores/inference-request-store";
 import {
+  LLAMACPP_METRIC_NAMES,
   SGLANG_METRIC_NAMES,
   VLLM_METRIC_NAMES,
   scrapeEngineMetrics,
@@ -66,9 +67,10 @@ const buildCurrentMetrics = (
       vram_used_gb: Math.round(vramUsedGb * 10) / 10,
       vram_capacity_gb: Math.round(vramCapacityGb * 10) / 10,
       power_limit_watts: Math.round(powerLimitWatts),
+      instance_count: (yield* context.bridge.runningInstances()).length,
     };
 
-    const scrape = yield* scrapeEngineMetrics(context.config.inference_port, 1500);
+    const scrape = yield* scrapeEngineMetrics(current?.port ?? context.config.inference_port, 1500);
     const engineActive = scrape.hasVllm || scrape.hasSglang || scrape.hasLlamacpp;
 
     if (!current && !engineActive) {
@@ -81,13 +83,18 @@ const buildCurrentMetrics = (
     }
 
     const isSglang = current?.backend === "sglang" || (!current && scrape.hasSglang);
+    const isLlamacpp = current?.backend === "llamacpp" || (!current && scrape.hasLlamacpp);
     const modelId =
       current?.served_model_name ??
       current?.model_path?.split("/").pop() ??
       scrape.modelName ??
       "active";
     const prometheus = scrape.metrics;
-    const names = isSglang ? SGLANG_METRIC_NAMES : VLLM_METRIC_NAMES;
+    const names = isLlamacpp
+      ? LLAMACPP_METRIC_NAMES
+      : isSglang
+        ? SGLANG_METRIC_NAMES
+        : VLLM_METRIC_NAMES;
     const usageAggregate: UsageAggregate | null =
       yield* context.stores.inferenceRequestStore.aggregateEffect(
         buildModelKeys(modelId, current?.model_path),
