@@ -23,7 +23,9 @@ export const registerLifecycleRoutes = defineRoutes((app, context) =>
               new HttpStatus({ status: 429, detail: formatLaunchFailureBudgetMessage(blocked) }),
             );
           }
-          yield* context.bridge.launchRecipe(recipe).pipe(
+          yield* context.bridge
+            .launchRecipe(recipe, ctx.req.query("instance") ?? undefined)
+            .pipe(
             Effect.mapError((failure) => {
               if (failure.kind !== "already-running" && failure.kind !== "cancelled") {
                 context.launchFailureBudget.recordFailure(recipeId);
