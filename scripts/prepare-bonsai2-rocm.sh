@@ -28,7 +28,11 @@ if ! command -v rocminfo >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! rocminfo 2>/dev/null | grep -Eiq "\b${REQUIRED_ARCH}\b"; then
+# grep -q exits at the first match, which hands rocminfo a SIGPIPE (141). Under
+# `set -o pipefail` that becomes a pipeline failure, so the guard reports a missing
+# architecture on hosts that have it. Capture first, then match.
+rocminfo_text="$(rocminfo 2>/dev/null || true)"
+if ! grep -Eiq "\b${REQUIRED_ARCH}\b" <<< "$rocminfo_text"; then
   echo "error: required ROCm architecture ${REQUIRED_ARCH} was not reported by rocminfo" >&2
   exit 2
 fi
