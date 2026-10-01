@@ -54,7 +54,7 @@ export const llamacpp: ComputeEngineSpec = {
           servedNameFlag: "--alias",
           spelling,
           // Prometheus endpoint is opt-in, same as SGLang.
-          defaults: ["--metrics"],
+          defaults: ["--metrics", "--reasoning-format", "deepseek"],
         },
         request.port,
       ),
