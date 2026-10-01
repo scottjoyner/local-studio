@@ -32,10 +32,15 @@ import type { InstanceStore } from "./instances/store";
 export const LLM_INSTANCE = "llm";
 
 export interface ComputeBridge {
-  readonly findInferenceProcess: () => Effect.Effect<ProcessInfo | null>;
+  readonly findInferenceProcess: (
+    modelName?: string | null,
+  ) => Effect.Effect<ProcessInfo | null>;
   readonly getCurrentRecipe: () => Effect.Effect<Recipe | null, unknown>;
   readonly launchingRecipeId: () => string | null;
-  readonly launchRecipe: (recipe: Recipe) => Effect.Effect<InstanceRecord, LaunchFailure>;
+  readonly launchRecipe: (
+    recipe: Recipe,
+    instanceName?: string,
+  ) => Effect.Effect<InstanceRecord, LaunchFailure>;
   readonly evict: () => Effect.Effect<boolean>;
   readonly cancelLaunch: () => Effect.Effect<boolean>;
   readonly waitForHealthy: (timeoutMs: number) => Effect.Effect<boolean>;
@@ -254,10 +259,19 @@ const RUNNING_STATES = new Set(["starting", "ready", "unhealthy"]);
 export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBridge => {
   const llmRecord = (): InstanceRecord | null => deps.store.read(LLM_INSTANCE);
 
-  const findInferenceProcess = (): Effect.Effect<ProcessInfo | null> =>
+  const runningRecords = (): Effect.Effect<readonly InstanceRecord[]> =>
     Effect.gen(function* () {
-      const record = llmRecord();
-      if (!record || record.ref === null) return null;
+      const running: InstanceRecord[] = [];
+      for (const record of deps.store.all()) {
+        const state = yield* deps.compute.stateOf(record);
+        if (RUNNING_STATES.has(state)) running.push(record);
+      }
+      return running;
+    });
+
+  const processInfoFor = (record: InstanceRecord): Effect.Effect<ProcessInfo | null> =>
+    Effect.gen(function* () {
+      if (record.ref === null) return null;
       const state = yield* deps.compute.stateOf(record);
       if (!RUNNING_STATES.has(state)) return null;
       const recipe = yield* deps
@@ -271,6 +285,24 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
         port: record.port,
         served_model_name: recipe?.served_model_name ?? null,
       } satisfies ProcessInfo;
+    });
+
+  const findInferenceProcess = (
+    modelName?: string | null,
+  ): Effect.Effect<ProcessInfo | null> =>
+    Effect.gen(function* () {
+      const wanted = modelName?.trim();
+      if (!wanted) {
+        const record = llmRecord();
+        return record ? yield* processInfoFor(record) : null;
+      }
+      for (const record of yield* runningRecords()) {
+        const info = yield* processInfoFor(record);
+        if (!info) continue;
+        if (info.served_model_name === wanted || info.model_path === wanted) return info;
+      }
+      const fallback = llmRecord();
+      return fallback ? yield* processInfoFor(fallback) : null;
     });
 
   const getCurrentRecipe = (): Effect.Effect<Recipe | null, unknown> =>
@@ -288,7 +320,10 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     return record.ref === null ? record.recipeId : null;
   };
 
-  const launchRecipe = (recipe: Recipe): Effect.Effect<InstanceRecord, LaunchFailure> =>
+  const launchRecipe = (
+    recipe: Recipe,
+    instanceName: string = LLM_INSTANCE,
+  ): Effect.Effect<InstanceRecord, LaunchFailure> =>
     Effect.gen(function* () {
       const gpus = yield* getGpuInfo().pipe(Effect.catch(() => Effect.succeed([] as GpuInfo[])));
       const resolution = resolveRecipeGpuUuids(recipe, gpus);
@@ -298,9 +333,10 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
           detail: `GPU selectors could not be resolved: ${resolution.unresolvedTokens.join(", ")}`,
         });
       }
-      return yield* deps.compute.launch(
-        recipeToLaunchInput(recipe, deps.config, resolution.uuids),
-      );
+      return yield* deps.compute.launch({
+        ...recipeToLaunchInput(recipe, deps.config, resolution.uuids),
+        name: instanceName,
+      });
     });
 
   const waitForHealthy = (timeoutMs: number): Effect.Effect<boolean> =>
