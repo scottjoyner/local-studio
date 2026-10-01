@@ -31,11 +31,27 @@ import type { InstanceStore } from "./instances/store";
 
 export const LLM_INSTANCE = "llm";
 
+export interface InferenceTarget {
+  readonly process: ProcessInfo | null;
+  readonly runningCount: number;
+  /** The caller named a model, nothing matched it, and more than one instance is warm —
+   *  so the name is the only thing that could have disambiguated, and it did not. */
+  readonly ambiguous: boolean;
+}
+
 export interface ComputeBridge {
-  readonly findInferenceProcess: () => Effect.Effect<ProcessInfo | null>;
+  readonly resolveInferenceTarget: (
+    modelName?: string | null,
+  ) => Effect.Effect<InferenceTarget>;
+  readonly findInferenceProcess: (
+    modelName?: string | null,
+  ) => Effect.Effect<ProcessInfo | null>;
   readonly getCurrentRecipe: () => Effect.Effect<Recipe | null, unknown>;
   readonly launchingRecipeId: () => string | null;
-  readonly launchRecipe: (recipe: Recipe) => Effect.Effect<InstanceRecord, LaunchFailure>;
+  readonly launchRecipe: (
+    recipe: Recipe,
+    instanceName?: string,
+  ) => Effect.Effect<InstanceRecord, LaunchFailure>;
   readonly evict: () => Effect.Effect<boolean>;
   readonly cancelLaunch: () => Effect.Effect<boolean>;
   readonly waitForHealthy: (timeoutMs: number) => Effect.Effect<boolean>;
@@ -254,10 +270,19 @@ const RUNNING_STATES = new Set(["starting", "ready", "unhealthy"]);
 export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBridge => {
   const llmRecord = (): InstanceRecord | null => deps.store.read(LLM_INSTANCE);
 
-  const findInferenceProcess = (): Effect.Effect<ProcessInfo | null> =>
+  const runningRecords = (): Effect.Effect<readonly InstanceRecord[]> =>
     Effect.gen(function* () {
-      const record = llmRecord();
-      if (!record || record.ref === null) return null;
+      const running: InstanceRecord[] = [];
+      for (const record of deps.store.all()) {
+        const state = yield* deps.compute.stateOf(record);
+        if (RUNNING_STATES.has(state)) running.push(record);
+      }
+      return running;
+    });
+
+  const processInfoFor = (record: InstanceRecord): Effect.Effect<ProcessInfo | null> =>
+    Effect.gen(function* () {
+      if (record.ref === null) return null;
       const state = yield* deps.compute.stateOf(record);
       if (!RUNNING_STATES.has(state)) return null;
       const recipe = yield* deps
@@ -272,6 +297,38 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
         served_model_name: recipe?.served_model_name ?? null,
       } satisfies ProcessInfo;
     });
+
+  const resolveInferenceTarget = (
+    modelName?: string | null,
+  ): Effect.Effect<InferenceTarget> =>
+    Effect.gen(function* () {
+      const wanted = modelName?.trim();
+      if (!wanted) {
+        const record = llmRecord();
+        const process = record ? yield* processInfoFor(record) : null;
+        return { process, runningCount: process ? 1 : 0, ambiguous: false };
+      }
+      const running = yield* runningRecords();
+      const infos = yield* Effect.forEach(running, (record) => processInfoFor(record));
+      const live = infos.filter((info): info is ProcessInfo => info !== null);
+      const matched = live.find(
+        (info) => info.served_model_name === wanted || info.model_path === wanted,
+      );
+      if (matched) return { process: matched, runningCount: live.length, ambiguous: false };
+      // Nothing matched the name. With one instance warm the legacy contract still holds -
+      // clients that send an arbitrary model name expect whatever is loaded to answer - so
+      // fall back. With several, the name was the only disambiguator and it did not match,
+      // so serving one of them would be a guess.
+      if (live.length > 1) return { process: null, runningCount: live.length, ambiguous: true };
+      const fallback = llmRecord();
+      const process = fallback ? yield* processInfoFor(fallback) : null;
+      return { process, runningCount: process ? 1 : 0, ambiguous: false };
+    });
+
+  const findInferenceProcess = (
+    modelName?: string | null,
+  ): Effect.Effect<ProcessInfo | null> =>
+    resolveInferenceTarget(modelName).pipe(Effect.map((target) => target.process));
 
   const getCurrentRecipe = (): Effect.Effect<Recipe | null, unknown> =>
     Effect.gen(function* () {
@@ -288,7 +345,10 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     return record.ref === null ? record.recipeId : null;
   };
 
-  const launchRecipe = (recipe: Recipe): Effect.Effect<InstanceRecord, LaunchFailure> =>
+  const launchRecipe = (
+    recipe: Recipe,
+    instanceName: string = LLM_INSTANCE,
+  ): Effect.Effect<InstanceRecord, LaunchFailure> =>
     Effect.gen(function* () {
       const gpus = yield* getGpuInfo().pipe(Effect.catch(() => Effect.succeed([] as GpuInfo[])));
       const resolution = resolveRecipeGpuUuids(recipe, gpus);
@@ -298,9 +358,10 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
           detail: `GPU selectors could not be resolved: ${resolution.unresolvedTokens.join(", ")}`,
         });
       }
-      return yield* deps.compute.launch(
-        recipeToLaunchInput(recipe, deps.config, resolution.uuids),
-      );
+      return yield* deps.compute.launch({
+        ...recipeToLaunchInput(recipe, deps.config, resolution.uuids),
+        name: instanceName,
+      });
     });
 
   const waitForHealthy = (timeoutMs: number): Effect.Effect<boolean> =>
@@ -315,6 +376,7 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     });
 
   return {
+    resolveInferenceTarget,
     findInferenceProcess,
     getCurrentRecipe,
     launchingRecipeId,

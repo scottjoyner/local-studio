@@ -56,8 +56,8 @@ export const fetchLocal = (
   );
 };
 
-export const buildInferenceUrl = (context: AppContext, path: string): string =>
-  buildLocalUrl(context.config.inference_port, path, context.config.inference_host);
+export const buildInferenceUrl = (context: AppContext, path: string, port?: number): string =>
+  buildLocalUrl(port ?? context.config.inference_port, path, context.config.inference_host);
 
 export const fetchInference = (
   context: AppContext,

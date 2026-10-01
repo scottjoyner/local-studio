@@ -4,7 +4,7 @@ import { HttpStatus, notFound } from "../../core/errors";
 import { effectHandler } from "../../http/effect-handler";
 import { isRecipeRunning } from "../models/recipes/recipe-matching";
 import { documentRoute, defineRoutes, mergeRoutes } from "../../http/route-registrar";
-import type { Recipe } from "../models/types";
+import type { ProcessInfo, Recipe } from "../models/types";
 import { buildInferenceUrl } from "../../http/local-fetch";
 import {
   DEFAULT_CHAT_PROVIDER,
@@ -162,6 +162,7 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
   const resolveChatUpstream = (
     requestedModel: string | null,
     parsed: Record<string, unknown>,
+    inferencePort?: number,
   ): {
     upstreamUrl: string;
     headers: Record<string, string>;
@@ -187,7 +188,7 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
     const upstreamUrl =
       providerRouting && requestedModel
         ? `${providerRouting.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`
-        : buildInferenceUrl(context, "/v1/chat/completions");
+        : buildInferenceUrl(context, "/v1/chat/completions", inferencePort);
     const inferenceKey = process.env["INFERENCE_API_KEY"] ?? "";
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -204,22 +205,20 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
     matchedRecipe: Recipe,
     requestedModel: string | null,
     sourceHeader: string | null,
-  ): Effect.Effect<ModelNotRunningError | null, unknown> =>
-    context.bridge.findInferenceProcess().pipe(
-      Effect.map((current) => {
-        const matches =
-          current && isRecipeRunning(matchedRecipe, current, { allowEitherPathContains: true });
-        if (matches) return null;
-        const activeModel = current?.served_model_name ?? current?.model_path ?? null;
-        warnNonRunningModel({
-          requestedModel,
-          requestedRecipeId: matchedRecipe.id,
-          activeModel,
-          source: sourceHeader,
-        });
-        return modelNotRunningError(activeModel, requestedModel);
-      }),
-    );
+    current: ProcessInfo | null,
+  ): ModelNotRunningError | null => {
+    const matches =
+      current && isRecipeRunning(matchedRecipe, current, { allowEitherPathContains: true });
+    if (matches) return null;
+    const activeModel = current?.served_model_name ?? current?.model_path ?? null;
+    warnNonRunningModel({
+      requestedModel,
+      requestedRecipeId: matchedRecipe.id,
+      activeModel,
+      source: sourceHeader,
+    });
+    return modelNotRunningError(activeModel, requestedModel);
+  };
 
   const normalizeCompletionChoices = (
     result: Record<string, unknown>,
@@ -269,8 +268,21 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
           const bodyBuffer = bodyRead.value;
           const { parsed, requestedModel, matchedRecipe, isStreaming, bodyChanged, sessionId } =
             yield* parseChatBody(bodyBuffer, (name) => ctx.req.header(name));
+          const target = yield* context.bridge.resolveInferenceTarget(requestedModel);
           const { upstreamUrl, headers, requestProvider, providerRouting, rewroteModel } =
-            resolveChatUpstream(requestedModel, parsed);
+            resolveChatUpstream(requestedModel, parsed, target.process?.port);
+          if (target.ambiguous && requestProvider === DEFAULT_CHAT_PROVIDER) {
+            return ctx.json(
+              {
+                error: {
+                  message: `Model ${requestedModel} is not served by any of the ${target.runningCount} running instances; name one of them.`,
+                  type: "model_not_running",
+                  code: "model_not_running",
+                },
+              },
+              { status: 503 },
+            );
+          }
           const sourceHeader =
             ctx.req.header("x-vllm-source") ??
             ctx.req.header("x-source") ??
@@ -287,10 +299,11 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
           }
 
           if (matchedRecipe) {
-            const rejection = yield* gateOnRunningModel(
+            const rejection = gateOnRunningModel(
               matchedRecipe,
               requestedModel,
               sourceHeader,
+              target.process,
             );
             if (rejection) return ctx.json(rejection, { status: 503 });
           }
