@@ -797,6 +797,7 @@ function verifyProducer(
           "compiled_at",
           "receipt_expires_at",
           "authority",
+          "assistx_execution_policy",
         ]),
       producer_manifest_transaction_binding:
         !producerManifestPresent ||
