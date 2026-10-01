@@ -98,6 +98,16 @@ export const serializeRecipeExtraArguments = (recipe: Recipe): string[] => {
   ) {
     argv.push("--enable-expert-parallel");
   }
+  const thinkingBudget = recipe.max_thinking_tokens;
+  if (
+    recipe.backend === "llamacpp" &&
+    typeof thinkingBudget === "number" &&
+    Number.isInteger(thinkingBudget) &&
+    thinkingBudget >= 0 &&
+    !argv.includes("--reasoning-budget")
+  ) {
+    argv.push("--reasoning-budget", String(thinkingBudget));
+  }
   return argv;
 };
 
