@@ -31,7 +31,18 @@ import type { InstanceStore } from "./instances/store";
 
 export const LLM_INSTANCE = "llm";
 
+export interface InferenceTarget {
+  readonly process: ProcessInfo | null;
+  readonly runningCount: number;
+  /** The caller named a model, nothing matched it, and more than one instance is warm —
+   *  so the name is the only thing that could have disambiguated, and it did not. */
+  readonly ambiguous: boolean;
+}
+
 export interface ComputeBridge {
+  readonly resolveInferenceTarget: (
+    modelName?: string | null,
+  ) => Effect.Effect<InferenceTarget>;
   readonly findInferenceProcess: (
     modelName?: string | null,
   ) => Effect.Effect<ProcessInfo | null>;
@@ -287,23 +298,37 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
       } satisfies ProcessInfo;
     });
 
-  const findInferenceProcess = (
+  const resolveInferenceTarget = (
     modelName?: string | null,
-  ): Effect.Effect<ProcessInfo | null> =>
+  ): Effect.Effect<InferenceTarget> =>
     Effect.gen(function* () {
       const wanted = modelName?.trim();
       if (!wanted) {
         const record = llmRecord();
-        return record ? yield* processInfoFor(record) : null;
+        const process = record ? yield* processInfoFor(record) : null;
+        return { process, runningCount: process ? 1 : 0, ambiguous: false };
       }
-      for (const record of yield* runningRecords()) {
-        const info = yield* processInfoFor(record);
-        if (!info) continue;
-        if (info.served_model_name === wanted || info.model_path === wanted) return info;
-      }
+      const running = yield* runningRecords();
+      const infos = yield* Effect.forEach(running, (record) => processInfoFor(record));
+      const live = infos.filter((info): info is ProcessInfo => info !== null);
+      const matched = live.find(
+        (info) => info.served_model_name === wanted || info.model_path === wanted,
+      );
+      if (matched) return { process: matched, runningCount: live.length, ambiguous: false };
+      // Nothing matched the name. With one instance warm the legacy contract still holds -
+      // clients that send an arbitrary model name expect whatever is loaded to answer - so
+      // fall back. With several, the name was the only disambiguator and it did not match,
+      // so serving one of them would be a guess.
+      if (live.length > 1) return { process: null, runningCount: live.length, ambiguous: true };
       const fallback = llmRecord();
-      return fallback ? yield* processInfoFor(fallback) : null;
+      const process = fallback ? yield* processInfoFor(fallback) : null;
+      return { process, runningCount: process ? 1 : 0, ambiguous: false };
     });
+
+  const findInferenceProcess = (
+    modelName?: string | null,
+  ): Effect.Effect<ProcessInfo | null> =>
+    resolveInferenceTarget(modelName).pipe(Effect.map((target) => target.process));
 
   const getCurrentRecipe = (): Effect.Effect<Recipe | null, unknown> =>
     Effect.gen(function* () {
@@ -351,6 +376,7 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     });
 
   return {
+    resolveInferenceTarget,
     findInferenceProcess,
     getCurrentRecipe,
     launchingRecipeId,

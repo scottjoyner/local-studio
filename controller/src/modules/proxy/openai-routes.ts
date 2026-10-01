@@ -268,9 +268,21 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
           const bodyBuffer = bodyRead.value;
           const { parsed, requestedModel, matchedRecipe, isStreaming, bodyChanged, sessionId } =
             yield* parseChatBody(bodyBuffer, (name) => ctx.req.header(name));
-          const target = yield* context.bridge.findInferenceProcess(requestedModel);
+          const target = yield* context.bridge.resolveInferenceTarget(requestedModel);
           const { upstreamUrl, headers, requestProvider, providerRouting, rewroteModel } =
-            resolveChatUpstream(requestedModel, parsed, target?.port);
+            resolveChatUpstream(requestedModel, parsed, target.process?.port);
+          if (target.ambiguous && requestProvider === DEFAULT_CHAT_PROVIDER) {
+            return ctx.json(
+              {
+                error: {
+                  message: `Model ${requestedModel} is not served by any of the ${target.runningCount} running instances; name one of them.`,
+                  type: "model_not_running",
+                  code: "model_not_running",
+                },
+              },
+              { status: 503 },
+            );
+          }
           const sourceHeader =
             ctx.req.header("x-vllm-source") ??
             ctx.req.header("x-source") ??
@@ -291,7 +303,7 @@ export const registerOpenAIRoutes = defineRoutes((app, context) => {
               matchedRecipe,
               requestedModel,
               sourceHeader,
-              target,
+              target.process,
             );
             if (rejection) return ctx.json(rejection, { status: 503 });
           }
