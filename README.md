@@ -159,6 +159,8 @@ Recipes launch through the controller runtime layer. Wired backend families:
 - `llamacpp` — llama.cpp `llama-server` recipes for GGUF models.
 - `mlx` — MLX `mlx_lm.server` recipes for Apple Silicon.
 
+An experimental Radeon AI PRO R9700 + Ternary Bonsai 2 validation lane is documented in [`docs/r9700-ternary-bonsai2.md`](docs/r9700-ternary-bonsai2.md). It uses pinned PrismML llama.cpp ROCm binaries and produces evidence manifests without changing automatic routing or admission authority.
+
 Runtime target discovery, models, integrations, and server controls are
 surfaced in Configure; selections persist in the controller data directory.
 

@@ -30,15 +30,17 @@ const BYTES_PER_PARAM: Record<ModelIndexVariantFormat, number> = {
   nvfp4: 0.55,
   // Q4_K_M lands near 4.8 bits/weight once the attention tensors keep more bits.
   q4: 0.6,
+  ternary: 0.27,
 };
 
-export const FORMAT_ORDER: ModelIndexVariantFormat[] = ["bf16", "fp8", "nvfp4", "q4"];
+export const FORMAT_ORDER: ModelIndexVariantFormat[] = ["bf16", "fp8", "nvfp4", "q4", "ternary"];
 
 export const FORMAT_LABELS: Record<ModelIndexVariantFormat, string> = {
   bf16: "BF16",
   fp8: "FP8",
   nvfp4: "NVFP4",
   q4: "Q4",
+  ternary: "Ternary",
 };
 
 /** What each format actually buys you, for the drawer's quantization rows. */
@@ -46,7 +48,8 @@ export const FORMAT_BLURBS: Record<ModelIndexVariantFormat, string> = {
   bf16: "Full precision — reference quality, largest download",
   fp8: "Half the weights, near-BF16 quality, needs sm_89+",
   nvfp4: "4-bit for Blackwell; falls back to slower kernels elsewhere",
-  q4: "Smallest footprint — llama.cpp / GGUF and AWQ builds",
+  q4: "Small footprint — llama.cpp / GGUF and AWQ builds",
+  ternary: "Sub-3-bit ternary weights — runtime support is model-specific",
 };
 
 export function variantSizeGb(variant: ModelIndexVariant, model: ModelIndexModel): number | null {
