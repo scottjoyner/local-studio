@@ -24,9 +24,14 @@ import type { InstanceStore } from "./instances/store";
 /**
  * The legacy-surface bridge: everything the old engine coordinator and process manager
  * answered — "what is serving on the inference port", "what is launching", launch,
- * evict, wait-ready — answered from compute instance records instead. One model at a
- * time is preserved by giving the active model a fixed instance name and serving it on
- * the legacy inference port, so the proxy, metrics and speech surfaces are unchanged.
+ * evict, wait-ready — answered from compute instance records instead.
+ *
+ * The default instance name is what keeps the no-argument surface stable: with no model
+ * named, `findInferenceProcess` and `launchingRecipeId` answer for the default instance
+ * exactly as before, so the metrics and status surfaces still describe one model. Naming a
+ * model resolves across every warm instance instead, which is how the proxy routes when
+ * several are resident. There is no speech surface here to preserve; the GPU lease registry
+ * that had a speech owner went with the speech service.
  */
 
 export const LLM_INSTANCE = "llm";
