@@ -182,6 +182,8 @@ try {
       "--opencode",
       "--session",
       `opencode=${receipt}`,
+      "--session",
+      `hermes=${receipt}`,
     ],
     { encoding: "utf8" },
   );
@@ -192,11 +194,17 @@ try {
   if (legacyManifest.summary?.opencodeSessionEvidenceAccepted !== false) {
     throw new Error("legacy file-only OpenCode evidence received promotion credit");
   }
+  if (legacyManifest.summary?.hermesFileBackedSessionEvidencePresent !== true) {
+    throw new Error("file-backed Hermes diagnostic evidence was not retained");
+  }
+  if (legacyManifest.summary?.hermesSessionEvidenceAccepted !== false) {
+    throw new Error("file-backed Hermes diagnostic evidence received promotion credit");
+  }
   if (legacyManifest.summary?.sessionEvidenceAccepted !== false) {
-    throw new Error("legacy file-only OpenCode evidence satisfied session gate");
+    throw new Error("legacy file-only OpenCode/Hermes evidence satisfied session gate");
   }
 
-  process.stdout.write("OpenCode receipt binding contract PASS\n");
+  process.stdout.write("OpenCode/Hermes receipt binding contract PASS\n");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }
