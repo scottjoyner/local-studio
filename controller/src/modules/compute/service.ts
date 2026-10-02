@@ -3,6 +3,7 @@ import type { Config } from "../../config/env";
 import { runCommandAsyncEffect } from "../../core/command";
 import type { EventManager } from "../system/event-manager";
 import type { DeviceId, HostProfile, EngineRuntimeKind } from "./contracts";
+import { isUsableForInference } from "./devices/accelerators";
 import { makeTelemetry, profileFrom, type Telemetry } from "./devices/snapshot";
 import { makeInstanceStore, type InstanceStore } from "./instances/store";
 import { makeDockerLauncher } from "./launchers/docker";
@@ -80,10 +81,25 @@ export const makeCompute = (config: Config, eventManager: EventManager): Compute
       ? makeDockerLauncher(lastProfile?.accelerator ?? "cuda")
       : processLauncher;
 
+  /**
+   * Candidates for an unpinned launch, best first.
+   *
+   * Every accelerator used to be offered in snapshot order, so once the discrete card was
+   * held by one instance the next launch received whatever was left — an integrated GPU
+   * with no compute capability, which the runtime rejects with a driver-level error about
+   * missing devices rather than anything about placement. Ranking by capacity keeps the
+   * discrete card first and drops parts too small to hold weights.
+   */
   const freeDevices = (): Effect.Effect<readonly DeviceId[]> =>
-    telemetry
-      .snapshot()
-      .pipe(Effect.map((snapshot) => snapshot.accelerators.map((accelerator) => accelerator.id)));
+    telemetry.snapshot().pipe(
+      Effect.map((snapshot) =>
+        [...snapshot.accelerators]
+          // Largest first so the discrete card wins over an APU when both are free.
+          .sort((left, right) => right.memoryTotalBytes - left.memoryTotalBytes)
+          .filter(isUsableForInference)
+          .map((accelerator) => accelerator.id),
+      ),
+    );
 
   const service = makeComputeService({
     store,

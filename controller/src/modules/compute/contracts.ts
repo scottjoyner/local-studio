@@ -273,7 +273,13 @@ export interface DeviceSnapshot {
 export type LaunchFailure =
   | { readonly kind: "unsupported"; readonly engine: EngineId; readonly reason: string }
   | { readonly kind: "already-running"; readonly name: string }
-  | { readonly kind: "no-capacity"; readonly need: number; readonly free: number }
+  | {
+      readonly kind: "no-capacity";
+      readonly need: number;
+      readonly free: number;
+      /** Names the unusable device when the request pinned one, rather than only counting. */
+      readonly detail?: string;
+    }
   | { readonly kind: "install-failed"; readonly engine: EngineId; readonly detail: string }
   | { readonly kind: "spawn-failed"; readonly detail: string }
   | {

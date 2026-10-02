@@ -14,7 +14,7 @@ const messageOf = (failure: LaunchFailure): string => {
     case "already-running":
       return `${failure.name} is already running`;
     case "no-capacity":
-      return `needs ${failure.need} device(s); only ${failure.free} free`;
+      return failure.detail ?? `needs ${failure.need} device(s); only ${failure.free} free`;
     case "install-failed":
       return `${failure.engine} install failed: ${failure.detail}`;
     case "spawn-failed":

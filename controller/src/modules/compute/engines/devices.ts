@@ -18,9 +18,21 @@ export interface DeviceRuntimeFlags {
 
 const joined = (devices: readonly DeviceId[]): string => devices.join(",");
 
-/** Indices for accelerators whose tooling selects by ordinal rather than UUID. */
+/**
+ * Indices for accelerators whose tooling selects by ordinal rather than UUID.
+ *
+ * Only a trailing `:<digits>` is an index. A PCI bus id (`c7:00.0`) also contains a colon,
+ * and a UUID may end in one, so slicing at the last colon turns those into `00.0` or a hex
+ * fragment — an ordinal that selects the wrong card or none at all. Anything that is not
+ * already an index is passed through untouched so the vendor tooling can resolve it.
+ */
 const ordinals = (devices: readonly DeviceId[]): string =>
-  devices.map((device) => device.slice(device.lastIndexOf(":") + 1)).join(",");
+  devices
+    .map((device) => {
+      const suffix = device.slice(device.lastIndexOf(":") + 1);
+      return /^\d+$/.test(suffix) ? suffix : device;
+    })
+    .join(",");
 
 export const deviceEnvironment = (
   accelerator: Accelerator,

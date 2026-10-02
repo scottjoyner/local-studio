@@ -71,6 +71,16 @@ const toAccelerator = (gpu: GpuInfo, vendor: DeviceVendor): AcceleratorInfo => (
   driver: null,
 });
 
+/**
+ * Smallest VRAM worth offering a model runtime. Integrated parts report a couple of GB
+ * and no compute capability, so a launch placed there fails inside the driver with an
+ * error about missing devices that says nothing about placement.
+ */
+export const MIN_USABLE_VRAM_BYTES = 4 * 1024 * 1024 * 1024;
+
+export const isUsableForInference = (accelerator: AcceleratorInfo): boolean =>
+  accelerator.memoryTotalBytes >= MIN_USABLE_VRAM_BYTES;
+
 /** Which fields at least one accelerator on this host can actually answer. */
 const capabilitiesOf = (accelerators: readonly AcceleratorInfo[]): readonly TelemetryField[] => {
   if (accelerators.length === 0) return [];
