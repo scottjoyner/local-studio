@@ -77,6 +77,26 @@ type StatusSectionViewInput = {
   platformKind?: RuntimePlatformKind | null;
 };
 
+/** Names for every instance that is not the one the dashboard is showing metrics for.
+ *  The primary is matched on whichever identity it exposes, so a record that reports only
+ *  a path still suppresses itself. */
+const coResidentLabels = (
+  instances: readonly RunningInstance[],
+  currentProcess: ProcessInfo | null,
+  currentRecipe: RecipeWithStatus | null,
+): string[] => {
+  const primaryKey =
+    currentProcess?.served_model_name || currentProcess?.model_path || currentRecipe?.id || null;
+  return instances
+    .filter(
+      (instance) => instance.served_model_name !== primaryKey && instance.model_path !== primaryKey,
+    )
+    .map(
+      (instance) =>
+        instance.served_model_name ?? instance.model_path ?? `Instance on port ${instance.port}`,
+    );
+};
+
 export function resolveStatusSectionView({
   currentProcess,
   coResidentInstances = [],
@@ -87,11 +107,6 @@ export function resolveStatusSectionView({
   platformKind,
 }: StatusSectionViewInput) {
   const isRunning = Boolean(currentProcess);
-  const primaryKey =
-    currentProcess?.served_model_name || currentProcess?.model_path || currentRecipe?.id || null;
-  const secondaryInstances = coResidentInstances.filter(
-    (instance) => instance.served_model_name !== primaryKey && instance.model_path !== primaryKey,
-  );
   const perf = resolvePerformanceMetrics(metrics, gpus);
   return {
     backend: currentProcess?.backend,
@@ -102,10 +117,7 @@ export function resolveStatusSectionView({
     steadyMetrics: steadyMetricViews(metrics, perf),
     modelName: resolveModelName(currentProcess, currentRecipe),
     coResidentCount: coResidentInstances.length,
-    coResidentModels: secondaryInstances.map(
-      (instance) =>
-        instance.served_model_name ?? instance.model_path ?? `Instance on port ${instance.port}`,
-    ),
+    coResidentModels: coResidentLabels(coResidentInstances, currentProcess, currentRecipe),
     pid: currentProcess?.pid,
     sampleInput: {
       key: resolveModelSampleKey(currentProcess, currentRecipe),
