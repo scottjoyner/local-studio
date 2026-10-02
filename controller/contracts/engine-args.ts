@@ -174,55 +174,6 @@ export const stripForeignFlagKeys = (
   return result;
 };
 
-export const KNOWN_VLLM_EXTRA_ARG_KEYS: ReadonlySet<string> = new Set([
-  ...ENGINE_ARG_SPECS.filter((spec) => spec.scope !== "device").map((spec) =>
-    engineArgKey(spec.field),
-  ),
-  ...SGLANG_COMPATIBLE_VLLM_KEYS,
-  "tensor-parallel-size",
-  "pipeline-parallel-size",
-  "max-model-len",
-  "gpu-memory-utilization",
-  "max-num-seqs",
-  "kv-cache-dtype",
-  "trust-remote-code",
-  "tool-call-parser",
-  "reasoning-parser",
-  "enable-auto-tool-choice",
-  "quantization",
-  "dtype",
-  "served-model-name",
-  "host",
-  "port",
-  "attention-backend",
-  "moe-backend",
-  "async-scheduling",
-  "hf-overrides",
-  "speculative-config",
-  "speculative-config-2",
-  "decode-context-parallel-size",
-  "dcp-comm-backend",
-  "dcp-kv-cache-interleave-size",
-  "fuse-allreduce-rms",
-  "fuse-rms",
-  "fuse-rms-norm",
-  "fuse-rms-quant",
-  "fuse-attn-quant",
-  "extra-llm-config",
-  "override-generation-config",
-  "override-attention-dtype",
-  "tensor-parallel-size-of-mlp",
-]);
-
-const VLLM_EXPERIMENTAL_PREFIXES: readonly string[] = [
-  "b12x-",
-  "darkdevotion-",
-  "cute-",
-  "fuse-",
-  "rok-",
-  "swap-",
-];
-
 export const INTERNAL_RECIPE_KEYS: ReadonlySet<string> = new Set([
   ...ENGINE_ARG_SPECS.filter((spec) => spec.scope === "device").map((spec) =>
     engineArgKey(spec.field),
@@ -252,30 +203,3 @@ const JSON_STRING_ARG_KEYS: ReadonlySet<string> = new Set([
 export const isJsonStringArgumentKey = (key: string): boolean =>
   JSON_STRING_ARG_KEYS.has(normalizeEngineArgKey(key));
 
-const isKnownVllmExtraArgKey = (key: string): boolean => {
-  const normalized = normalizeEngineArgKey(key);
-  if (KNOWN_VLLM_EXTRA_ARG_KEYS.has(normalized)) return true;
-  if (INTERNAL_RECIPE_KEYS.has(normalized)) return true;
-  return VLLM_EXPERIMENTAL_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-};
-
-export const getUnknownVllmExtraArgKeys = (
-  extraArgs: Record<string, unknown> | null | undefined,
-): string[] => {
-  const source = extraArgs ?? {};
-  const blocked: string[] = [];
-  for (const key of Object.keys(source)) {
-    if (!isKnownVllmExtraArgKey(key)) {
-      blocked.push(key);
-    }
-  }
-  return blocked;
-};
-
-export const looksLikeNotesKey = (key: string): boolean => {
-  const normalized = normalizeEngineArgKey(key);
-  if (normalized.startsWith("benchmark-notes")) return true;
-  if (normalized.endsWith("-notes")) return true;
-  if (/^.*-\d{6,8}$/.test(normalized)) return true;
-  return false;
-};

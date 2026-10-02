@@ -191,11 +191,3 @@ export function discoverPluginBundles(
   });
 }
 
-export function discoverPlugins(
-  sources: PluginSource[] = defaultPluginSources(),
-  maxDepth = 5,
-): Effect.Effect<PluginView[], PluginDiscoveryError> {
-  return discoverPluginBundles(sources, maxDepth).pipe(
-    Effect.map((bundles) => bundles.map(({ plugin }) => plugin)),
-  );
-}

@@ -110,10 +110,6 @@ async function writeConnectors(connectors: ConnectorConfig[]): Promise<void> {
   await rename(tempFile, file);
 }
 
-export function saveConnectors(connectors: ConnectorConfig[]): Promise<void> {
-  return withConnectorAccess(() => writeConnectors(connectors));
-}
-
 export async function upsertConnector(connector: ConnectorConfig): Promise<ConnectorConfig[]> {
   return upsertConnectors([connector]);
 }
