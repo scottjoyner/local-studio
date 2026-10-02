@@ -36,15 +36,21 @@ export const evaluateR9700HardwareIdentity = ({
   const architectureSet = new Set((architectures ?? []).map(normalizedArch));
   const hardwareArchitectureAccepted = architectureSet.has(normalizedRequiredArch);
 
+  const memoryFloorMb = Number(requiredMemoryMb);
+  const validMemoryFloor =
+    Number.isInteger(memoryFloorMb) && memoryFloorMb > 0 ? memoryFloorMb : null;
+
   const requiredName = String(requiredGpuName ?? "").trim().toLowerCase();
   const matchingGpuName =
-    requiredName.length > 0
+    requiredName.length > 0 && validMemoryFloor !== null
       ? (controllerGpus ?? []).find(
           (gpu) =>
             gpu &&
             typeof gpu === "object" &&
             typeof gpu.name === "string" &&
-            gpu.name.toLowerCase().includes(requiredName),
+            gpu.name.toLowerCase().includes(requiredName) &&
+            Number.isFinite(Number(gpu.memory_total_mb)) &&
+            Number(gpu.memory_total_mb) >= validMemoryFloor,
         ) ?? null
       : null;
 
@@ -56,9 +62,6 @@ export const evaluateR9700HardwareIdentity = ({
           (device) => normalizePciDeviceId(device?.id) === normalizedRequiredPciDeviceId,
         ) ?? null;
 
-  const memoryFloorMb = Number(requiredMemoryMb);
-  const validMemoryFloor =
-    Number.isInteger(memoryFloorMb) && memoryFloorMb > 0 ? memoryFloorMb : null;
   const matchingMemoryGpu =
     validMemoryFloor === null
       ? null
@@ -71,7 +74,7 @@ export const evaluateR9700HardwareIdentity = ({
         ) ?? null;
 
   const hardwareIdentityMethod = matchingGpuName
-    ? "controller-name"
+    ? "controller-name+memory"
     : matchingPciDevice && matchingMemoryGpu
       ? "pci-device+memory"
       : null;
