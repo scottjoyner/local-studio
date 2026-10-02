@@ -1832,9 +1832,16 @@ function setupRepository() {
 }
 function auditLayout() {
   let expected = ["frontend/desktop/project.mjs", "scripts/install-controller.sh", "scripts/install-desktop-app.sh"], actual = readdirSync10(path11.join(root5, "scripts"), { withFileTypes: !0 }).filter((entry) => entry.isFile()).map((entry) => `scripts/${entry.name}`).sort(), executable = git(["ls-files", "-s"]).split("\n").filter((line) => line.startsWith("100755 ")).map((line) => line.split("\t")[1]).sort(), stale = ["frontend/scripts", "controller/scripts", "services/agent-runtime/scripts"].filter((directory) => existsSync(path11.join(root5, directory)));
-  if (JSON.stringify(actual) !== JSON.stringify(expected.slice(1)) || JSON.stringify(executable) !== JSON.stringify(expected) || stale.length > 0)
-    throw Error(`Automation layout drifted: scripts=${actual.join(",")}; executable=${executable.join(",")}; stale=${stale.join(",")}`);
-  console.log("Automation layout passed: exactly three scripts");
+  // This used to assert that scripts/ held exactly the two installers, which meant every
+  // added script had to edit a hand-maintained list here. That list was not updated when
+  // the R9700 and System-One evidence lanes landed, so the gate failed on a clean tree and
+  // was skipped rather than trusted. Assert the invariants instead: the hub still has its
+  // symlink, nothing untracked sits in scripts/, executables stay a deliberate short list,
+  // and the retired per-package script directories stay gone.
+  let tracked = new Set(git(["ls-files", "scripts"]).split("\n").filter((line) => line.length > 0)), untracked = actual.filter((entry) => !tracked.has(entry)), hub = "scripts/project.mjs", hubTarget = lstatSync2(path11.join(root5, hub)).isSymbolicLink() ? readlinkSync(path11.join(root5, hub)) : "not a symlink";
+  if (untracked.length > 0 || JSON.stringify(executable) !== JSON.stringify(expected) || stale.length > 0 || hubTarget !== "../frontend/desktop/project.mjs")
+    throw Error(`Automation layout drifted: untracked=${untracked.join(",")}; executable=${executable.join(",")}; stale=${stale.join(",")}; hub=${hubTarget}`);
+  console.log(`Automation layout passed: ${actual.length} tracked script(s), ${executable.length} executable entrypoint(s)`);
 }
 function git(args3, options = {}) {
   return execFileSync6("git", args3, { cwd: root5, encoding: "utf8", ...options }).trim();
