@@ -51,7 +51,7 @@ The script fails closed unless `rocminfo` reports `gfx1201`. It downloads the pi
 └── runtime/
 ```
 
-Override the root with `LOCAL_STUDIO_BONSAI_ROOT`.
+Override the root with `LOCAL_STUDIO_BONSAI_ROOT`. Override the inference port with `LOCAL_STUDIO_BONSAI_PORT` (default `8000`); the R9700 host has previously used `8010` when another service occupied `8000`.
 
 ## One-command physical acceptance
 
