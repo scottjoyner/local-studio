@@ -50,10 +50,13 @@ function withPublicKey(
   try {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const publicKeyPath = path.join(root, "producer-public.pem");
-    writeFileSync(
-      publicKeyPath,
-      publicKey.export({ type: "spki", format: "pem" }),
-    );
+    // The policy refuses a group- or world-writable key, so the fixture has to state the
+    // mode rather than inherit it: writeFileSync applies the process umask, and under a
+    // 0002 umask the default lands on 0664 and every assertion here fails on a machine
+    // configured for shared development while passing on CI's 0022.
+    writeFileSync(publicKeyPath, publicKey.export({ type: "spki", format: "pem" }), {
+      mode: 0o600,
+    });
     fn({ publicKeyPath, privateKey, publicKey });
   } finally {
     rmSync(root, { recursive: true, force: true });
