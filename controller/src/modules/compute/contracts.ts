@@ -190,6 +190,9 @@ export interface InstanceRecord {
   readonly ref: HandleReference | null;
   readonly port: number;
   readonly devices: readonly DeviceId[];
+  /** VRAM this instance was estimated to need. Summed per device so the next reservation
+   *  can tell whether a partly-used card still has room for another model. */
+  readonly estimatedVramBytes: number;
   /** Proves we started it; a launcher refuses to signal a handle whose nonce differs. */
   readonly nonce: string;
   readonly startedAt: string;
