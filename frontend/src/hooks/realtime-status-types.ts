@@ -8,11 +8,21 @@ import type {
   RuntimePlatformKind,
 } from "@/lib/types";
 
+export interface RunningInstance {
+  port: number;
+  pid: number;
+  backend: string;
+  served_model_name: string | null;
+  model_path: string | null;
+}
+
 export interface StatusData {
   running: boolean;
   process: ProcessInfo | null;
   inference_port: number;
   launching: string | null;
+  instance_count?: number;
+  instances?: RunningInstance[];
 }
 
 export interface RuntimeSummaryData {

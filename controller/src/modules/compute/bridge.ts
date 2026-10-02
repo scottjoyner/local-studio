@@ -312,8 +312,17 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
       const wanted = modelName?.trim();
       if (!wanted) {
         const record = llmRecord();
-        const process = record ? yield* processInfoFor(record) : null;
-        return { process, runningCount: process ? 1 : 0, ambiguous: false };
+        const fallback = record ? yield* processInfoFor(record) : null;
+        if (fallback !== null) return { process: fallback, runningCount: 1, ambiguous: false };
+        // No default instance is warm, but a named one may be. Serving the only warm
+        // instance keeps the single-model contract intact; with several warm and no
+        // default there is no principled pick, so report none.
+        const running = yield* runningRecords();
+        const infos = yield* Effect.forEach(running, (candidate) => processInfoFor(candidate));
+        const live = infos.filter((info): info is ProcessInfo => info !== null);
+        const only = live[0] ?? null;
+        if (only !== null) return { process: only, runningCount: 1, ambiguous: false };
+        return { process: null, runningCount: live.length, ambiguous: live.length > 1 };
       }
       const running = yield* runningRecords();
       const infos = yield* Effect.forEach(running, (record) => processInfoFor(record));

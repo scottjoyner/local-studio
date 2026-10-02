@@ -9,6 +9,7 @@ export function useDashboardData() {
   const router = useRouter();
   const realtime = useRealtimeStatusStore();
   const currentProcess = realtime.status?.process || null;
+  const coResidentInstances = realtime.status?.instances ?? [];
   const identified = metricsWithProcessIdentity(realtime.metrics, currentProcess);
   const metrics = scopedMetrics(identified, currentProcess);
   // Metrics arrived but could not be attributed to the running process. Without
@@ -25,6 +26,7 @@ export function useDashboardData() {
 
   return {
     currentProcess,
+    coResidentInstances,
     currentRecipe: recipesState.currentRecipe,
     metrics,
     metricsDetached,

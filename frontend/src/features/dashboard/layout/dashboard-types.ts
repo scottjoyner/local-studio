@@ -6,10 +6,16 @@ import type {
   RecipeWithStatus,
   RuntimePlatformKind,
 } from "@/lib/types";
-import type { LeaseInfo, RuntimeSummaryData, ServiceEntry } from "@/hooks/realtime-status-types";
+import type {
+  LeaseInfo,
+  RunningInstance,
+  RuntimeSummaryData,
+  ServiceEntry,
+} from "@/hooks/realtime-status-types";
 
 export interface DashboardLayoutProps {
   currentProcess: ProcessInfo | null;
+  coResidentInstances?: RunningInstance[];
   currentRecipe: RecipeWithStatus | null;
   metrics: Metrics | null;
   /** Metrics were received but do not match the running process. */

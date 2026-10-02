@@ -1,12 +1,14 @@
 "use client";
 
 import type { GPU, Metrics, ProcessInfo, RecipeWithStatus, RuntimePlatformKind } from "@/lib/types";
+import type { RunningInstance } from "@/hooks/realtime-status-types";
 import { StatusHeader, StatusMetricStrip } from "./status-section-parts";
 import { MetricTrends, useMetricSamples } from "./status-section-trends";
 import { resolveStatusSectionView } from "./status-section-view";
 
 interface StatusSectionProps {
   currentProcess: ProcessInfo | null;
+  coResidentInstances?: RunningInstance[];
   currentRecipe: RecipeWithStatus | null;
   metrics: Metrics | null;
   metricsDetached?: boolean;
@@ -29,6 +31,7 @@ interface StatusSectionProps {
 
 export function StatusSection({
   currentProcess,
+  coResidentInstances,
   currentRecipe,
   metrics,
   metricsDetached = false,
@@ -50,6 +53,7 @@ export function StatusSection({
 }: StatusSectionProps) {
   const view = resolveStatusSectionView({
     currentProcess,
+    coResidentInstances,
     currentRecipe,
     gpus,
     inferencePort,
@@ -74,6 +78,8 @@ export function StatusSection({
         lifecycleError={lifecycleError}
         metricsDetached={metricsDetached}
         modelName={view.modelName}
+        coResidentCount={view.coResidentCount}
+        coResidentModels={view.coResidentModels}
         pid={view.pid}
         onBenchmark={onBenchmark}
         onLaunch={onLaunch}
