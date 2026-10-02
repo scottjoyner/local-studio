@@ -196,6 +196,11 @@ try {
     throw new Error("legacy file-only OpenCode evidence satisfied session gate");
   }
 
+  const captureSource = readFileSync(capture, "utf8");
+  if (!captureSource.includes("const hermesSessionEvidenceAccepted = false;")) {
+    throw new Error("Hermes file-only evidence is not pinned fail-closed");
+  }
+
   process.stdout.write("OpenCode receipt binding contract PASS\n");
 } finally {
   rmSync(temp, { recursive: true, force: true });
