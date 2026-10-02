@@ -1,4 +1,5 @@
 import type { GPU, Metrics, ProcessInfo, RecipeWithStatus, RuntimePlatformKind } from "@/lib/types";
+import type { RunningInstance } from "@/hooks/realtime-status-types";
 import { formatCompactTokens, toGBFromMB } from "@/lib/formatters";
 
 export type MetricSampleInput = {
@@ -68,6 +69,7 @@ const PEAK_DISPLAY: Record<PeakKind, { digits: number; suffix: string; label: st
 
 type StatusSectionViewInput = {
   currentProcess: ProcessInfo | null;
+  coResidentInstances?: RunningInstance[];
   currentRecipe: RecipeWithStatus | null;
   gpus: GPU[];
   inferencePort?: number;
@@ -77,6 +79,7 @@ type StatusSectionViewInput = {
 
 export function resolveStatusSectionView({
   currentProcess,
+  coResidentInstances = [],
   currentRecipe,
   gpus,
   inferencePort,
@@ -84,6 +87,11 @@ export function resolveStatusSectionView({
   platformKind,
 }: StatusSectionViewInput) {
   const isRunning = Boolean(currentProcess);
+  const primaryKey =
+    currentProcess?.served_model_name || currentProcess?.model_path || currentRecipe?.id || null;
+  const secondaryInstances = coResidentInstances.filter(
+    (instance) => instance.served_model_name !== primaryKey && instance.model_path !== primaryKey,
+  );
   const perf = resolvePerformanceMetrics(metrics, gpus);
   return {
     backend: currentProcess?.backend,
@@ -93,6 +101,11 @@ export function resolveStatusSectionView({
     liveMetrics: liveMetricViews(metrics, perf),
     steadyMetrics: steadyMetricViews(metrics, perf),
     modelName: resolveModelName(currentProcess, currentRecipe),
+    coResidentCount: coResidentInstances.length,
+    coResidentModels: secondaryInstances.map(
+      (instance) =>
+        instance.served_model_name ?? instance.model_path ?? `Instance on port ${instance.port}`,
+    ),
     pid: currentProcess?.pid,
     sampleInput: {
       key: resolveModelSampleKey(currentProcess, currentRecipe),
@@ -308,7 +321,11 @@ function compact(value: number | null): string | null {
   return value != null ? formatCompactTokens(value) : null;
 }
 
-function capDetail(shareValue: number | null, cap: number | null, unit: string): string | undefined {
+function capDetail(
+  shareValue: number | null,
+  cap: number | null,
+  unit: string,
+): string | undefined {
   if (shareValue === null || cap === null) return undefined;
   return `${Math.round(shareValue * 100)}% of ${cap.toFixed(0)} ${unit}`;
 }

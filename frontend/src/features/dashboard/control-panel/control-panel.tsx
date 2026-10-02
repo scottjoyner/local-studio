@@ -27,6 +27,7 @@ export function ControlPanel(props: DashboardLayoutProps) {
       <ControllerMatrix />
       <StatusSection
         currentProcess={currentProcess}
+        coResidentInstances={props.coResidentInstances}
         currentRecipe={currentRecipe}
         metrics={metrics}
         metricsDetached={props.metricsDetached}

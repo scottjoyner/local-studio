@@ -23,6 +23,8 @@ export function StatusHeader({
   lifecycleError,
   metricsDetached,
   modelName,
+  coResidentCount = 0,
+  coResidentModels = [],
   onBenchmark,
   onLaunch,
   onNavigateLogs,
@@ -44,6 +46,8 @@ export function StatusHeader({
   lifecycleError?: string | null;
   metricsDetached: boolean;
   modelName: string;
+  coResidentCount?: number;
+  coResidentModels?: string[];
   onBenchmark: () => void;
   onLaunch?: (recipeId: string) => Promise<void>;
   onNavigateLogs: () => void;
@@ -73,6 +77,14 @@ export function StatusHeader({
         >
           {modelName}
         </h1>
+        {coResidentModels.length > 0 ? (
+          <p
+            className="mt-1 truncate text-[length:var(--fs-sm)] text-(--fg-muted)"
+            title={coResidentModels.join(", ")}
+          >
+            {coResidentCount} models loaded &middot; also serving {coResidentModels.join(", ")}
+          </p>
+        ) : null}
         {lifecycleError ? (
           <p className="mt-1 text-[length:var(--fs-sm)] text-(--err)" role="alert">
             {lifecycleError}
