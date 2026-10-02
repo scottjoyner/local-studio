@@ -84,6 +84,8 @@ EVIDENCE_ARGS=(
   --engine-file "$LLAMA_SERVER"
   --require-arch "${LOCAL_STUDIO_BONSAI_REQUIRED_ARCH:-gfx1201}"
   --require-gpu-name "${LOCAL_STUDIO_BONSAI_GPU_NAME:-Radeon AI PRO R9700}"
+  --require-pci-device-id "${LOCAL_STUDIO_BONSAI_PCI_DEVICE_ID:-1002:7551}"
+  --require-memory-mb "${LOCAL_STUDIO_BONSAI_MIN_MEMORY_MB:-30000}"
   --run-benchmark
   --benchmark-prompt-tokens "${LOCAL_STUDIO_BONSAI_BENCHMARK_TOKENS:-1000}"
   --probe-tools
