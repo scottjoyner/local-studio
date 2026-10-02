@@ -286,6 +286,8 @@ Superseded design history, kept for provenance:
 
 - [Realtime mobile contract](docs/realtime-mobile-contract.md) — superseded; the gateway and
   shared schema it describes no longer exist.
+- [Repository contract audit (2026-10-02)](docs/housekeeping/repository-contract-audit-2026-10-02.md) —
+  contract authorities, dead code, CI/release findings, and the `main`/`dev` lineage split.
 
 ## Contributing
 
