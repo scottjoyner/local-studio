@@ -1,5 +1,11 @@
 # Agent session performance
 
+Status: RESEARCH / historical ledger. The measurements are a point-in-time
+snapshot from the 2026-08 session-performance pass. Verify every number against
+the current code before acting on it. Two `*.test.ts` files this document cites
+as guarding behavior were deleted, and it links a `docs/quality-waves.md` that
+never existed in this repository.
+
 Working ledger for the session-performance pass: load, sync, reload, and
 holding many sessions at once. **Measure first** — nothing lands here without a
 before/after number, because the last three passes over this code (see

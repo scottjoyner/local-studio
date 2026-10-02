@@ -1,5 +1,9 @@
 # R9700 Bonsai 2 ROCm package
 
+Status: CURRENT_OPERATOR. Step 5-6 follow-on lane to
+`docs/r9700-ternary-bonsai2.md` (step 1-4). Produces a candidate proposal only;
+it is not validation or promotion authority.
+
 This stacked lane turns the accepted Local Studio R9700/Bonsai evidence into an Omarchy-style portable candidate without changing validation authority.
 
 The flow has three different receipts and they are intentionally not interchangeable:

@@ -18,7 +18,7 @@ It is built from two modules that share one controller API:
 
 - [`controller/`](controller/README.md) — Bun/Hono backend. Owns model lifecycle
   (launch, evict, recipes, downloads, runtime process coordination), an
-  OpenAI-compatible proxy (chat, models, tokenization, audio), system state
+  OpenAI-compatible proxy (chat, models, tokenization), system state
   (GPU metrics, logs, usage, settings, SSE), and controller integrations.
 - [`frontend/`](frontend/README.md) — Next.js 16 + React 19 UI and the macOS
   Electron desktop shell. Hosts the Workbench (`/agent`), consolidated
@@ -78,7 +78,6 @@ flowchart TB
         Proxy["src/modules/proxy"]
         Studio["src/modules/studio"]
         System["src/modules/system"]
-        Audio["src/modules/audio"]
         Stores["src/stores"]
     end
 
@@ -88,7 +87,6 @@ flowchart TB
     HttpApp --> Proxy
     HttpApp --> Studio
     HttpApp --> System
-    HttpApp --> Audio
     System --> Stores
 ```
 
@@ -264,6 +262,30 @@ Local Studio is built with and inspired by exceptional open-source work:
   and serving backend supported throughout Local Studio.
 - [Convex](https://github.com/get-convex/convex-backend) — inspiration for
   reactive, real-time application architecture.
+
+## Documentation
+
+Operator and validation lanes:
+
+- [Radeon AI PRO R9700 + Ternary Bonsai 2 validation](docs/r9700-ternary-bonsai2.md) —
+  the experimental validation lane and its evidence bundle.
+- [R9700 Bonsai registry handoff](docs/r9700-bonsai-registry-handoff.md) — renders an
+  accepted bundle into a registry candidate proposal.
+- [R9700 Bonsai 2 ROCm package](docs/r9700-bonsai-omarchy-package.md) — builds a portable
+  image and Omarchy-style candidate from accepted evidence.
+- [System-One advisory context](docs/system-one-advisory.md) — the advisory contract and
+  the operator acceptance harness.
+
+Developer reference:
+
+- [The Models page](docs/models-catalog.md) — UI shell rules for the Models page tables.
+- [Agent session performance](docs/session-performance.md) — research ledger (historical
+  measurements, verify before acting).
+
+Superseded design history, kept for provenance:
+
+- [Realtime mobile contract](docs/realtime-mobile-contract.md) — superseded; the gateway and
+  shared schema it describes no longer exist.
 
 ## Contributing
 
