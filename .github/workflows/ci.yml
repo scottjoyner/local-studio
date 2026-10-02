@@ -58,6 +58,10 @@ jobs:
           node --check scripts/render-r9700-bonsai-omarchy-candidate.test.mjs
           bash -n scripts/prepare-bonsai2-rocm.sh
           bash -n scripts/validate-bonsai2-r9700.sh
+      - name: Installer syntax
+        run: |
+          bash -n scripts/install-controller.sh
+          bash -n scripts/install-desktop-app.sh
       - name: OpenCode session evidence contract
         run: node scripts/export-opencode-session-evidence.test.mjs
       - name: OpenCode receipt binding contract

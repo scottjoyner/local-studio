@@ -78,8 +78,14 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
   fi
 }
-if [ -f "$ENV_FILE" ] && grep -q '^LOCAL_STUDIO_API_KEY=' "$ENV_FILE"; then
-  API_KEY="$(read_env_value LOCAL_STUDIO_API_KEY)"
+EXISTING_API_KEY=""
+if [ -f "$ENV_FILE" ]; then
+  EXISTING_API_KEY="$(read_env_value LOCAL_STUDIO_API_KEY)"
+fi
+# Reuse only a non-empty key: `.env.example` ships LOCAL_STUDIO_API_KEY= blank,
+# and an empty value cannot authenticate, so the desktop deploy reports failure.
+if [ -n "$EXISTING_API_KEY" ]; then
+  API_KEY="$EXISTING_API_KEY"
   log "reusing existing API key from .env"
 else
   if command -v openssl >/dev/null 2>&1; then
@@ -87,7 +93,15 @@ else
   else
     API_KEY="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   fi
-  printf 'LOCAL_STUDIO_API_KEY=%s\n' "$API_KEY" >> "$ENV_FILE"
+  # Replace a blank entry in place rather than appending: read_env_value takes the
+  # first match, systemd's EnvironmentFile takes the last, and a duplicated key
+  # leaves this installer disagreeing with the controller it starts.
+  if grep -q "^LOCAL_STUDIO_API_KEY=" "$ENV_FILE" 2>/dev/null; then
+    awk 'index($0, "LOCAL_STUDIO_API_KEY=") == 1 { if (!written) print "LOCAL_STUDIO_API_KEY='"$API_KEY"'"; written=1; next } { print }' "$ENV_FILE" > "$ENV_FILE.tmp"
+    mv "$ENV_FILE.tmp" "$ENV_FILE"
+  else
+    printf 'LOCAL_STUDIO_API_KEY=%s\n' "$API_KEY" >> "$ENV_FILE"
+  fi
   log "wrote $ENV_FILE"
 fi
 if [ -z "$HOST_WAS_SET" ] && grep -q '^LOCAL_STUDIO_HOST=' "$ENV_FILE"; then HOST="$(read_env_value LOCAL_STUDIO_HOST)"; fi
