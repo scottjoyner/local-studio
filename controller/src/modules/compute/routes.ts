@@ -3,7 +3,8 @@ import { badRequest } from "../../core/errors";
 import { readBoundedRequestBody } from "../../http/bounded-body";
 import { effectHandler } from "../../http/effect-handler";
 import { defineRoutes, documentRoute, mergeRoutes } from "../../http/route-registrar";
-import { ENGINE_IDS, type EngineId, type ServingOptions } from "./contracts";
+import { ENGINE_IDS, type EngineId, type LaunchFailure, type ServingOptions } from "./contracts";
+import { isUsableForInference } from "./devices/accelerators";
 import { availableEngines } from "./engines/registry";
 import { toHttp } from "./failures";
 
@@ -30,6 +31,7 @@ const LaunchRequestSchema = Schema.Struct({
   recipeId: Schema.optional(Schema.String),
   runtime: Schema.optional(Schema.Literals(["process", "docker"])),
   deviceCount: Schema.optional(Schema.Number),
+  devices: Schema.optional(Schema.Array(Schema.String)),
   servedModelName: Schema.optional(Schema.String),
   options: Schema.optional(OptionsSchema),
   extraArgs: Schema.optional(Schema.Array(Schema.String)),
@@ -103,6 +105,31 @@ export const registerComputeRoutes = defineRoutes((app, context) =>
           const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(LaunchRequestSchema))(
             new TextDecoder().decode(bytes),
           ).pipe(Effect.mapError((error) => badRequest(`invalid launch request: ${String(error)}`)));
+          // An explicit pin bypasses the free-device ranking, so a request aimed at an
+          // integrated part would otherwise fail inside the driver with an error about
+          // missing devices. Refuse it here, naming the device and its capacity.
+          if (parsed.devices !== undefined && parsed.devices.length > 0) {
+            const snapshot = yield* context.compute.telemetry.snapshot();
+            const unusable = parsed.devices.filter((id) => {
+              const accelerator = snapshot.accelerators.find((entry) => entry.id === id);
+              return accelerator !== undefined && !isUsableForInference(accelerator);
+            });
+            if (unusable.length > 0) {
+              const detail = unusable
+                .map((id) => {
+                  const accelerator = snapshot.accelerators.find((entry) => entry.id === id);
+                  const gb = accelerator ? (accelerator.memoryTotalBytes / 1024 ** 3).toFixed(1) : "?";
+                  return `${id} (${accelerator?.name ?? "unknown"}, ${gb} GB)`;
+                })
+                .join(", ");
+              return yield* Effect.fail<LaunchFailure>({
+                kind: "no-capacity",
+                need: 1,
+                free: 0,
+                detail: `cannot run a model on ${detail}: too little VRAM for weights`,
+              }).pipe(Effect.mapError(toHttp));
+            }
+          }
           const record = yield* context.compute.service
             .launch({
               name: parsed.name,
@@ -110,6 +137,9 @@ export const registerComputeRoutes = defineRoutes((app, context) =>
               recipeId: parsed.recipeId ?? parsed.name,
               runtime: parsed.runtime ?? "process",
               deviceCount: parsed.deviceCount ?? 1,
+              // Pinned devices must reach the launch input, or the reservation silently
+              // falls back to "any free device" and can hand a model the wrong GPU.
+              ...(parsed.devices !== undefined ? { devices: parsed.devices } : {}),
               modelPath: parsed.modelPath,
               servedModelName: parsed.servedModelName ?? parsed.name,
               options: mergeOptions(parsed.options ?? {}),
