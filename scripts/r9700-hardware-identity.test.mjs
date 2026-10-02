@@ -78,7 +78,20 @@ const explicitNameAccepted = evaluateR9700HardwareIdentity({
   pciDevices: [],
 });
 assert.equal(explicitNameAccepted.hardwareAccepted, true);
-assert.equal(explicitNameAccepted.hardwareIdentityMethod, "controller-name");
+assert.equal(explicitNameAccepted.hardwareIdentityMethod, "controller-name+memory");
+
+const namedButUndersizedRejected = evaluateR9700HardwareIdentity({
+  architectures: ["gfx1201"],
+  requiredArch: "gfx1201",
+  requiredGpuName: "Radeon AI PRO R9700",
+  requiredPciDeviceId: "1002:7551",
+  requiredMemoryMb: 30000,
+  controllerGpus: [
+    { index: 0, name: "AMD Radeon AI PRO R9700", memory_total_mb: 16384 },
+  ],
+  pciDevices: [],
+});
+assert.equal(namedButUndersizedRejected.hardwareIdentityAccepted, false);
 
 const wrongArchRejected = evaluateR9700HardwareIdentity({
   architectures: ["gfx1200"],
