@@ -66,7 +66,8 @@ export OPENCODE_SESSION_ID=<existing-session-id>
 # exits non-promotable so the provider can be pinned explicitly.
 export OPENCODE_EXPECTED_PROVIDER=<local-studio-provider-id>
 
-# Or prove the same endpoint through Hermes:
+# Hermes exports may be captured for diagnostic provenance, but do not
+# satisfy the promotion session gate until a semantic verifier exists:
 export HERMES_SESSION_ID=<existing-hermes-session-id>
 
 bash scripts/validate-bonsai2-r9700.sh
@@ -78,7 +79,7 @@ The Local Studio evidence collector now independently verifies that receipt/expo
 
 If immutable legacy OpenCode evidence is already a known file, `OPENCODE_SESSION_FILE=/path/to/session-or-report.jsonl` is still recorded for diagnostics and historical comparison, but it does not receive promotion credit by itself. The linked sanitized-export + receipt path is the required OpenCode acceptance evidence. Override the output paths with `OPENCODE_SESSION_EXPORT` and `OPENCODE_SESSION_RECEIPT`, and raise the minimum completed tool count with `OPENCODE_MIN_COMPLETED_TOOLS`.
 
-For Hermes, `HERMES_SESSION_ID` asks the current `hermes` CLI to export that session as a redacted JSONL receipt before capture; the default output is `$LOCAL_STUDIO_BONSAI_ROOT/hermes-session.evidence.jsonl`. Set `HERMES_SESSION_FILE=/path/to/already-exported-session.jsonl` to reuse an existing export instead. OpenCode and Hermes evidence can both be supplied in the same run.
+For Hermes, `HERMES_SESSION_ID` asks the current `hermes` CLI to export that session as a redacted JSONL artifact before capture; the default output is `$LOCAL_STUDIO_BONSAI_ROOT/hermes-session.evidence.jsonl`. Set `HERMES_SESSION_FILE=/path/to/already-exported-session.jsonl` to reuse an existing export instead. These files remain useful hashed diagnostic provenance, but they do **not** receive promotion credit until the collector has a semantic Hermes verifier that independently proves session identity, provider/model, completed-tool semantics, and fallback absence. OpenCode's verified sanitized-export + receipt path is therefore the current session-promotion path.
 
 The harness prepares the pinned runtime/model, upserts the recipe, launches it only when it is not already running, waits for readiness, runs the built-in benchmark, captures controller/ROCm/client evidence, and prints the promotion blockers from the final manifest.
 
