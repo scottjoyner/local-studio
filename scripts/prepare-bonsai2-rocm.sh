@@ -13,10 +13,16 @@ MODEL_SHA256="3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1"
 MMPROJ_FILE="Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
 MMPROJ_SHA256="6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903"
 REQUIRED_ARCH="${LOCAL_STUDIO_BONSAI_REQUIRED_ARCH:-gfx1201}"
+PORT="${LOCAL_STUDIO_BONSAI_PORT:-8000}"
 ROOT="${LOCAL_STUDIO_BONSAI_ROOT:-$HOME/.local/share/local-studio/experimental/bonsai2-r9700}"
 BIN_DIR="$ROOT/runtime/${RELEASE_TAG}"
 MODEL_DIR="$ROOT/models"
 RECIPE_PATH="${LOCAL_STUDIO_BONSAI_RECIPE:-$ROOT/bonsai2-r9700.recipe.json}"
+
+if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+  echo "error: LOCAL_STUDIO_BONSAI_PORT must be an integer from 1 to 65535" >&2
+  exit 2
+fi
 
 if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
   echo "error: this bootstrap is for Linux x86_64 ROCm hosts" >&2
@@ -91,7 +97,7 @@ verify_sha256 "$MODEL_DIR/$MMPROJ_FILE" "$MMPROJ_SHA256" "Bonsai 2 projector"
 
 sha256sum "$LLAMA_SERVER" "$MODEL_DIR/$MODEL_FILE" "$MODEL_DIR/$MMPROJ_FILE" > "$ROOT/artifacts.sha256"
 
-LLAMA_SERVER="$LLAMA_SERVER" MODEL_PATH="$MODEL_DIR/$MODEL_FILE" MMPROJ_PATH="$MODEL_DIR/$MMPROJ_FILE" RECIPE_PATH="$RECIPE_PATH" node --input-type=module <<'NODE'
+LLAMA_SERVER="$LLAMA_SERVER" MODEL_PATH="$MODEL_DIR/$MODEL_FILE" MMPROJ_PATH="$MODEL_DIR/$MMPROJ_FILE" RECIPE_PATH="$RECIPE_PATH" PORT="$PORT" node --input-type=module <<'NODE'
 import { writeFileSync } from "node:fs";
 
 const recipe = {
@@ -119,7 +125,7 @@ const recipe = {
   quantization: "PQ2_0",
   dtype: null,
   host: "127.0.0.1",
-  port: 8000,
+  port: Number(process.env.PORT),
   served_model_name: "Ternary-Bonsai-2-27B-PQ2_0",
   python_path: null,
   extra_args: {
@@ -141,6 +147,7 @@ Prepared candidate R9700/Bonsai 2 runtime:
   model:        $MODEL_DIR/$MODEL_FILE
   mmproj:       $MODEL_DIR/$MMPROJ_FILE
   recipe:       $RECIPE_PATH
+  port:         $PORT
   engine ref:   PrismML-Eng/llama.cpp@$RELEASE_COMMIT
   model ref:    $MODEL_REPO@$MODEL_REVISION
   model sha256: $MODEL_SHA256
