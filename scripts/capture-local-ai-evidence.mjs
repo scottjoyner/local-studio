@@ -667,8 +667,13 @@ const manifest = {
       fileBackedSessionEvidenceByAgent,
     ).reduce((sum, count) => sum + count, 0);
     const opencodeSessionEvidenceAccepted = opencodeReceiptVerification?.accepted === true;
-    const hermesSessionEvidenceAccepted =
+    // File-backed Hermes exports are retained as diagnostic provenance only.
+    // Unlike the OpenCode path, no semantic verifier currently proves session identity,
+    // exact provider/model, completed tool semantics, or fallback absence. A hash alone
+    // must therefore never satisfy the promotion session gate.
+    const hermesFileBackedSessionEvidencePresent =
       fileBackedSessionEvidenceByAgent.hermes > 0;
+    const hermesSessionEvidenceAccepted = false;
     const hashedBenchmarkEvidenceCount = benchmarkEvidence.filter(
       (entry) => entry.type === "file" && typeof entry.sha256 === "string",
     ).length;
@@ -722,6 +727,7 @@ const manifest = {
       sessionEvidenceAccepted,
       opencodeSessionEvidenceAccepted,
       hermesSessionEvidenceAccepted,
+      hermesFileBackedSessionEvidencePresent,
       benchmarkEvidenceAccepted,
       liveBenchmarkAccepted,
       candidatePromotable,
