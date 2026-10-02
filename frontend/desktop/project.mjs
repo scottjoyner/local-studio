@@ -1374,8 +1374,111 @@ function collectExportedDeclarations(rel, source) {
     exportedDeclarations.get(name).push(rel);
   }
 }
+var engineBackends, engineLabelSites, engineLabelMismatches, authorityFindings, unionPattern;
+function readRepoFile(relativePath) {
+  return readFileSync14(join4(root3, relativePath), "utf8");
+}
+function stringUnionMembers(source, name) {
+  let declaration = new RegExp(`export\\s+type\\s+${name}\\s*=\\s*([^;]+);`);
+  let match = declaration.exec(source);
+  if (!match)
+    return null;
+  return [...match[1].matchAll(unionPattern)].map((entry) => entry[1]);
+}
+/** Read the flat `key: "value"` entries of a `const <symbol> = { ... }` string map. */
+function objectStringEntries(source, symbol) {
+  let declaration = new RegExp(`(?:export\\s+)?const\\s+${symbol}\\b[^=]*=\\s*\\{`), start = declaration.exec(source);
+  if (!start)
+    return null;
+  let open = start.index + start[0].length - 1, braceDepth = 0, end = -1;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{")
+      braceDepth += 1;
+    else if (source[index] === "}" && --braceDepth === 0) {
+      end = index;
+      break;
+    }
+  }
+  if (end === -1)
+    return null;
+  let body = source.slice(open + 1, end), entries = new Map, entry = /([A-Za-z0-9_]+)\s*:\s*"([^"]*)"/g, match;
+  while ((match = entry.exec(body)) !== null)
+    entries.set(match[1], match[2]);
+  return entries;
+}
+function collectEngineBackends() {
+  let fromContracts = stringUnionMembers(readRepoFile("controller/contracts/system.ts"), "EngineBackend");
+  if (!fromContracts)
+    throw Error("Could not read the EngineBackend union from controller/contracts/system.ts");
+  let fromRecipes = stringUnionMembers(readRepoFile("controller/contracts/recipes.ts"), "Backend");
+  if (fromRecipes && [...fromRecipes].sort().join(",") !== [...fromContracts].sort().join(",")) {
+    authorityFindings.push(`controller/contracts/recipes.ts Backend [${fromRecipes.join(", ")}] does not match system.ts EngineBackend [${fromContracts.join(", ")}]`);
+  }
+  return fromContracts;
+}
+function collectEngineLabelSites(engineBackends) {
+  let sites = [
+    ["controller/src/modules/engines/runtimes/runtime-targets.ts", "ENGINE_LABEL"],
+    ["frontend/src/lib/serve-runtime.ts", "ENGINE_LABEL"],
+    ["frontend/src/features/recipes/engine-capabilities.ts", "ENGINE_LABEL"]
+  ], labels = new Map;
+  for (let [rel, symbol] of sites) {
+    let entries = objectStringEntries(readRepoFile(rel), symbol);
+    if (!entries) {
+      authorityFindings.push(`${rel}: expected ${symbol} to be a plain object literal keyed by every engine backend`);
+      continue;
+    }
+    let missing = engineBackends.filter((backend) => !entries.has(backend));
+    let extra = [...entries.keys()].filter((backend) => !engineBackends.includes(backend));
+    if (missing.length > 0 || extra.length > 0) {
+      authorityFindings.push(`${rel}: ${symbol} keys [${[...entries.keys()].join(", ")}] do not cover the engine backends [${engineBackends.join(", ")}]`);
+      continue;
+    }
+    labels.set(rel, entries);
+  }
+  return labels;
+}
+function checkEngineLabelParity(labels) {
+  if (labels.size < 2)
+    return;
+  let sites2 = [...labels.keys()].sort(), canonical = labels.get(sites2[0]);
+  for (let rel of sites2.slice(1)) {
+    for (let backend of engineBackends) {
+      let expected = canonical.get(backend), actual = labels.get(rel)?.get(backend);
+      if (expected !== actual)
+        engineLabelMismatches.push(`${rel}: ENGINE_LABEL.${backend} is "${actual}" but ${sites2[0]} says "${expected}"`);
+    }
+  }
+}
+function checkBackendLists(engineBackends) {
+  let controllerLists = [
+    ["controller/src/modules/engines/runtimes/runtime-targets.ts", /const BACKENDS: readonly EngineBackend\[\] = \[([^\]]*)\]/],
+    ["frontend/src/features/settings/engines-section-model.ts", /const FALLBACK_ENGINES = \[([^\]]*)\] as const/]
+  ];
+  for (let [rel, pattern] of controllerLists) {
+    let match = pattern.exec(readRepoFile(rel));
+    if (!match) {
+      authorityFindings.push(`${rel}: expected a literal engine backend list to match the contract`);
+      continue;
+    }
+    let values = [...match[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map((entry) => entry[1]);
+    if (values.join(",") !== engineBackends.join(","))
+      authorityFindings.push(`${rel}: lists [${values.join(", ")}] but the contract backends are [${engineBackends.join(", ")}]`);
+  }
+  let routes = readRepoFile("controller/src/modules/engines/runtime-routes.ts");
+  let jobBackends = /const RUNTIME_JOB_BACKENDS = \[([^\]]*)\] as const/.exec(routes);
+  if (!jobBackends) {
+    authorityFindings.push("controller/src/modules/engines/runtime-routes.ts: expected a RUNTIME_JOB_BACKENDS literal list");
+    return;
+  }
+  let jobValues = [...jobBackends[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map((entry) => entry[1]);
+  let missingJobs = engineBackends.filter((backend) => !jobValues.includes(backend));
+  if (missingJobs.length > 0)
+    authorityFindings.push(`controller/src/modules/engines/runtime-routes.ts: RUNTIME_JOB_BACKENDS [${jobValues.join(", ")}] omits engine backends [${missingJobs.join(", ")}]`);
+}
 var root3, contractNames, allowedFiles, scanRoots, findings2, exportedDeclarations, duplicateDeclarations;
 var init_validate_shared_contracts = __esm(() => {
+  unionPattern = /"([A-Za-z0-9_]+)"/g, authorityFindings = [], engineLabelMismatches = [];
   root3 = resolve5(import.meta.dirname, "../.."), contractNames = [
     "Backend",
     "ServeRuntimeKind",
@@ -1466,7 +1569,25 @@ var init_validate_shared_contracts = __esm(() => {
     }
     console.error("Export one declaration and re-export aliases from compatibility barrels instead."), process.exit(1);
   }
-  console.log("Shared contract check passed");
+  try {
+    engineBackends = collectEngineBackends(), engineLabelSites = collectEngineLabelSites(engineBackends), checkEngineLabelParity(engineLabelSites), checkBackendLists(engineBackends);
+  } catch (error) {
+    console.error(`Contract authority check failed: ${error instanceof Error ? error.message : String(error)}`), process.exit(1);
+  }
+  if (authorityFindings.length > 0 || engineLabelMismatches.length > 0) {
+    if (authorityFindings.length > 0) {
+      console.error("Engine/backend contract authority drift found:");
+      for (let finding of authorityFindings)
+        console.error(`- ${finding}`);
+    }
+    if (engineLabelMismatches.length > 0) {
+      console.error("ENGINE_LABEL display-name drift found:");
+      for (let mismatch of engineLabelMismatches)
+        console.error(`- ${mismatch}`);
+    }
+    console.error("Model identity and display names have exactly one authority: controller/contracts."), process.exit(1);
+  }
+  console.log(`Shared contract check passed (${engineBackends.length} engine backends, ${engineLabelSites.size} ENGINE_LABEL sites in agreement)`);
 });
 
 var exports_validate_package_json = {};

@@ -27,7 +27,7 @@ export const ENGINE_TABLE_COLUMNS = ["Engine", "Version", "Location", "State"] a
 export const ENGINE_TABLE_COLSPAN = ENGINE_TABLE_COLUMNS.length;
 export const ENGINE_TABLE_MIN_WIDTH = "min-w-[46rem]";
 
-export const ENGINE_META: Record<string, { label: string; description: string }> = {
+export const ENGINE_META: Record<EngineBackend, { label: string; description: string }> = {
   vllm: {
     label: "vLLM",
     description: "High-throughput LLM serving with CUDA-oriented scheduling.",
@@ -262,9 +262,9 @@ function RuntimeTargetRow({
   const location = pathForTarget(target);
   const hasDetail = Boolean(
     job ||
-      (target.capabilities.canUpdate && target.update) ||
-      !target.capabilities.canUpdate ||
-      healthMessage,
+    (target.capabilities.canUpdate && target.update) ||
+    !target.capabilities.canUpdate ||
+    healthMessage,
   );
 
   return (

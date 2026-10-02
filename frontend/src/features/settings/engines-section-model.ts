@@ -1,11 +1,21 @@
-import type { RuntimeBackendInfo, RuntimeTarget, SystemRuntimeInfo } from "@/lib/types";
+import type {
+  EngineBackend,
+  RuntimeBackendInfo,
+  RuntimeTarget,
+  SystemRuntimeInfo,
+} from "@/lib/types";
 export { ENGINE_META } from "./runtime-targets";
 
-export const FALLBACK_ENGINES = ["vllm", "sglang", "llamacpp", "mlx"] as const;
+export const FALLBACK_ENGINES = [
+  "vllm",
+  "sglang",
+  "llamacpp",
+  "mlx",
+] as const satisfies readonly EngineBackend[];
 
 export type EngineRowsView =
-  | { kind: "backends"; rows: Array<{ id: string; info: RuntimeBackendInfo }> }
-  | { kind: "pending"; engineIds: readonly string[] }
+  | { kind: "backends"; rows: Array<{ id: EngineBackend; info: RuntimeBackendInfo }> }
+  | { kind: "pending"; engineIds: readonly EngineBackend[] }
   | { kind: "targets"; targets: RuntimeTarget[] };
 
 /**
