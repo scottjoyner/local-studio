@@ -4,6 +4,7 @@ import { runCommandAsyncEffect } from "../../core/command";
 import type { EventManager } from "../system/event-manager";
 import type { DeviceId, HostProfile, EngineRuntimeKind } from "./contracts";
 import { isUsableForInference } from "./devices/accelerators";
+import { capacityByDevice } from "./devices/vram";
 import { makeTelemetry, profileFrom, type Telemetry } from "./devices/snapshot";
 import { makeInstanceStore, type InstanceStore } from "./instances/store";
 import { makeDockerLauncher } from "./launchers/docker";
@@ -101,11 +102,17 @@ export const makeCompute = (config: Config, eventManager: EventManager): Compute
       ),
     );
 
+  const deviceCapacity = (): Effect.Effect<
+    Readonly<Record<DeviceId, { totalBytes: number; freeBytes: number }>>
+  > =>
+    telemetry.snapshot().pipe(Effect.map((snapshot) => capacityByDevice(snapshot.accelerators)));
+
   const service = makeComputeService({
     store,
     launcherFor,
     host,
     freeDevices,
+    deviceCapacity,
     onEvent: (name, stage, message) =>
       eventManager.publishLaunchProgress(name, stage, message),
   });

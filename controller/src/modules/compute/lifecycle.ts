@@ -10,6 +10,7 @@ import type {
   ServingOptions,
 } from "./contracts";
 import { fetchLocal } from "../../http/local-fetch";
+import { estimateVramBytes } from "./devices/vram";
 import { applyDevices } from "./engines/devices";
 import { engineSpec, planLaunch, supportsRuntime } from "./engines/registry";
 import { toEvent } from "./failures";
@@ -38,6 +39,11 @@ export interface ComputeDeps {
   readonly launcherFor: (runtime: EngineRuntimeKind) => Launcher;
   readonly host: () => Effect.Effect<HostProfile>;
   readonly freeDevices: () => Effect.Effect<readonly DeviceId[]>;
+  /** Total and free VRAM per device. Absent devices cannot be capacity-checked and keep
+   *  the exclusive lease. */
+  readonly deviceCapacity: () => Effect.Effect<
+    Readonly<Record<DeviceId, { totalBytes: number; freeBytes: number }>>
+  >;
   readonly onEvent: (name: string, stage: string, message: string) => Effect.Effect<void>;
 }
 
@@ -196,6 +202,7 @@ export const makeComputeService = (deps: ComputeDeps): ComputeService => {
 
       cancelRequested.delete(input.name);
       const candidates = input.devices ?? (yield* deps.freeDevices());
+      const estimatedVramBytes = estimateVramBytes(input.modelPath, input.options.maxContextLength);
       const record = yield* deps.store.reserve(
         {
           name: input.name,
@@ -207,6 +214,8 @@ export const makeComputeService = (deps: ComputeDeps): ComputeService => {
           need: input.devices
             ? input.devices.length
             : Math.min(input.deviceCount, Math.max(candidates.length, 0)),
+          estimatedVramBytes,
+          deviceCapacity: yield* deps.deviceCapacity(),
           shareable: host.unifiedMemory && !input.devices,
           basePort: spec.defaultPort,
           ...(input.portOverride !== undefined ? { exactPort: input.portOverride } : {}),

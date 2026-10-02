@@ -23,8 +23,8 @@ import type {
  * a crash mid-write reads as "not running" rather than as garbage.
  *
  * The records ARE the GPU lease. There is no registry, no lock-file-per-device, and no
- * in-memory cache of who holds what — `heldDevices` derives capacity by unioning the
- * devices of every record whose handle is still alive. The only mutual exclusion in the
+ * in-memory cache of who holds what — `heldUsageByDevice` derives capacity by summing
+ * the VRAM committed by every record whose handle is still alive. The only mutual exclusion in the
  * whole design is `withPlacementLock`, held for the few milliseconds of a reservation,
  * never across a spawn.
  */
@@ -40,9 +40,9 @@ export interface InstanceStore {
     reservation: Reservation,
     alive: (record: InstanceRecord) => Effect.Effect<boolean>,
   ) => Effect.Effect<InstanceRecord, LaunchFailure>;
-  readonly heldDevices: (
+  readonly heldUsageByDevice: (
     alive: (record: InstanceRecord) => Effect.Effect<boolean>,
-  ) => Effect.Effect<ReadonlySet<DeviceId>>;
+  ) => Effect.Effect<ReadonlyMap<DeviceId, number>>;
   readonly allocatePort: (basePort: number) => number;
 }
 
@@ -54,6 +54,11 @@ export interface Reservation {
   readonly runtime: EngineRuntimeKind;
   readonly candidates: readonly DeviceId[];
   readonly need: number;
+  /** VRAM the incoming instance needs, estimated from the model and context length. */
+  readonly estimatedVramBytes: number;
+  /** Total and currently-free VRAM per device, as the telemetry snapshot reported it.
+   *  Devices absent from this map cannot be capacity-checked and keep the exclusive lease. */
+  readonly deviceCapacity?: Readonly<Record<DeviceId, { totalBytes: number; freeBytes: number }>>;
   /** Unified-memory accelerators (Apple Silicon, DGX Spark) are shared by design: the
    *  SoC is one pool and RAM is the real budget, so instances stack on the same device
    *  instead of leasing it exclusively. */
@@ -184,18 +189,28 @@ export const makeInstanceStore = (dataDirectory: string): InstanceStore => {
     }
   };
 
-  const heldDevices = (
+  /** VRAM already committed per device, summed over records that still hold their lease. */
+  const heldUsageByDevice = (
     alive: (record: InstanceRecord) => Effect.Effect<boolean>,
-  ): Effect.Effect<ReadonlySet<DeviceId>> =>
+  ): Effect.Effect<ReadonlyMap<DeviceId, number>> =>
     Effect.gen(function* () {
-      const held = new Set<DeviceId>();
+      const usage = new Map<DeviceId, number>();
       for (const record of all()) {
         // A reservation with no handle yet still holds its devices — that is the point
         // of reserving before spawning.
         const holds = record.ref === null ? true : yield* alive(record);
-        if (holds) for (const device of record.devices) held.add(device);
+        if (!holds) continue;
+        // A record written before this field existed has no honest size, so treat it as
+        // consuming the whole card: that keeps the exclusive lease rather than letting an
+        // unmeasured instance share.
+        const committed = Number.isFinite(record.estimatedVramBytes)
+          ? record.estimatedVramBytes
+          : Number.POSITIVE_INFINITY;
+        for (const device of record.devices) {
+          usage.set(device, (usage.get(device) ?? 0) + committed);
+        }
       }
-      return held;
+      return usage;
     });
 
   // Record-held ports are not enough: an unrelated process (an orphaned dev server, a
@@ -231,8 +246,26 @@ export const makeInstanceStore = (dataDirectory: string): InstanceStore => {
     Effect.gen(function* () {
       yield* acquirePlacementLock(lockPath);
       const record = yield* Effect.gen(function* () {
-        const held = reservation.shareable ? new Set<DeviceId>() : yield* heldDevices(alive);
-        const free = reservation.candidates.filter((device) => !held.has(device));
+        const held = reservation.shareable
+          ? new Map<DeviceId, number>()
+          : yield* heldUsageByDevice(alive);
+        // A discrete card was leased exclusively, so a second model on a 34 GB GPU was
+        // refused while most of that card sat idle. When the snapshot told us the card's
+        // capacity, admit it once the existing leases plus this instance still fit;
+        // without a capacity reading, keep the exclusive rule.
+        const capacity = reservation.deviceCapacity;
+        const fits = (device: DeviceId): boolean => {
+          const reported = capacity?.[device];
+          if (reported === undefined) return !held.has(device);
+          // The driver's free figure is the only one that accounts for whatever else is
+          // resident on the card. Our own committed leases are checked against the full
+          // capacity, because a card can read as free once a neighbour has exited while
+          // this controller still believes it holds leases on it.
+          if (reported.freeBytes < reservation.estimatedVramBytes) return false;
+          const committed = held.get(device) ?? 0;
+          return committed + reservation.estimatedVramBytes <= reported.totalBytes;
+        };
+        const free = reservation.candidates.filter(fits);
         if (free.length < reservation.need) {
           return yield* Effect.fail<LaunchFailure>({
             kind: "no-capacity",
@@ -263,6 +296,7 @@ export const makeInstanceStore = (dataDirectory: string): InstanceStore => {
           ref: null,
           port,
           devices: free.slice(0, reservation.need),
+          estimatedVramBytes: reservation.estimatedVramBytes,
           nonce: randomUUID(),
           startedAt: new Date(now).toISOString(),
           readyDeadlineAt: new Date(now + reservation.readyDeadlineMs).toISOString(),
@@ -281,7 +315,7 @@ export const makeInstanceStore = (dataDirectory: string): InstanceStore => {
     drop,
     logPath: (name: string) => join(logsDirectory, `${safeName(name)}.log`),
     reserve,
-    heldDevices,
+    heldUsageByDevice,
     allocatePort,
   };
 };
