@@ -7,12 +7,10 @@ import { documentRoute, defineRoutes, mergeRoutes } from "../../http/route-regis
 import { isRecipeRunning } from "../models/recipes/recipe-matching";
 import { parseRecipe } from "../models/recipes/recipe-serializer";
 import { Event } from "../system/event-manager";
-import { createGetObservedProcess } from "./observed-process";
 
 const RecipePayloadSchema = Schema.Record(Schema.String, Schema.Unknown);
 
 export const registerRecipeRoutes = defineRoutes((app, context) => {
-  const getObservedProcess = createGetObservedProcess(context);
   const publish = (event: Event): Effect.Effect<void> => context.eventManager.publish(event);
 
   return mergeRoutes(
@@ -22,13 +20,15 @@ export const registerRecipeRoutes = defineRoutes((app, context) => {
       effectHandler((ctx) =>
         Effect.gen(function* () {
           const recipes = yield* context.stores.recipeStore.list();
-          const current = yield* getObservedProcess("recipes.list");
-          const launchingId = context.bridge.launchingRecipeId();
+          // A recipe served by a co-resident instance is running even when it is not the
+          // default one, so status has to consider every warm instance, not just the first.
+          const instances = yield* context.bridge.runningInstances();
+          const launchingIds = yield* context.bridge.launchingRecipeIds();
           const result = recipes.map((recipe) => {
             const crashLoop = context.launchFailureBudget.get(recipe.id);
             let status = crashLoop?.blocked ? "error" : "stopped";
-            if (launchingId === recipe.id) status = "starting";
-            if (current && isRecipeRunning(recipe, current)) status = "running";
+            if (launchingIds.includes(recipe.id)) status = "starting";
+            if (instances.some((instance) => isRecipeRunning(recipe, instance))) status = "running";
             return { ...recipe, status, crash_loop: crashLoop };
           });
           return ctx.json(result);

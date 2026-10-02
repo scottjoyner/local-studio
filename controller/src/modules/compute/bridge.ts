@@ -54,6 +54,7 @@ export interface ComputeBridge {
   ) => Effect.Effect<ProcessInfo | null>;
   readonly getCurrentRecipe: () => Effect.Effect<Recipe | null, unknown>;
   readonly launchingRecipeId: () => string | null;
+  readonly launchingRecipeIds: () => Effect.Effect<readonly string[]>;
   readonly launchRecipe: (
     recipe: Recipe,
     instanceName?: string,
@@ -349,6 +350,14 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
       return yield* deps.getRecipe(record.recipeId);
     });
 
+  const launchingRecipeIds = (): Effect.Effect<readonly string[]> =>
+    Effect.sync(() =>
+      deps.store
+        .all()
+        .filter((record) => record.ref === null)
+        .map((record) => record.recipeId),
+    );
+
   const launchingRecipeId = (): string | null => {
     const record = llmRecord();
     if (!record) return null;
@@ -393,6 +402,7 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     findInferenceProcess,
     getCurrentRecipe,
     launchingRecipeId,
+    launchingRecipeIds,
     launchRecipe,
     evict: () => deps.compute.stop(LLM_INSTANCE),
     cancelLaunch: () => deps.compute.cancel(LLM_INSTANCE),
