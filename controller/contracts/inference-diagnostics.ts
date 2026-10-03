@@ -116,19 +116,6 @@ export interface DiagnosticTiming {
   readonly timed_tokens: number | null;
 }
 
-export interface QualificationProbeResult {
-  readonly classification: DiagnosticClassification;
-  readonly profile: DiagnosticProfileName;
-  readonly engine_flagged: Backend | string | null;
-  readonly request_body: Readonly<Record<string, unknown>>;
-  readonly response_status: number | null;
-  readonly anatomy: ResponseAnatomy | null;
-  readonly reasoning_budget: ReasoningBudgetResolution;
-  readonly reasoning_separation: ReasoningSeparationResolution;
-  readonly reasoning_consumed_budget: boolean | null;
-  readonly evidence: readonly string[];
-}
-
 export interface DiagnosticReport {
   readonly schema_version: "1";
   readonly probed_at: string;
