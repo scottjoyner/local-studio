@@ -93,15 +93,12 @@ else
   else
     API_KEY="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   fi
-  # Replace a blank entry in place rather than appending: read_env_value takes the
-  # first match, systemd's EnvironmentFile takes the last, and a duplicated key
-  # leaves this installer disagreeing with the controller it starts.
-  if grep -q "^LOCAL_STUDIO_API_KEY=" "$ENV_FILE" 2>/dev/null; then
-    awk 'index($0, "LOCAL_STUDIO_API_KEY=") == 1 { if (!written) print "LOCAL_STUDIO_API_KEY='"$API_KEY"'"; written=1; next } { print }' "$ENV_FILE" > "$ENV_FILE.tmp"
-    mv "$ENV_FILE.tmp" "$ENV_FILE"
-  else
-    printf 'LOCAL_STUDIO_API_KEY=%s\n' "$API_KEY" >> "$ENV_FILE"
-  fi
+  # Replace the blank entry in place rather than appending: read_env_value takes the
+  # first match, systemd's EnvironmentFile takes the last, and a duplicated key leaves
+  # this installer disagreeing with the controller it starts. write_env_value already
+  # does exactly this, and passes the value through `awk -v` rather than splicing it
+  # into the program text, so a key containing a quote cannot break the write.
+  write_env_value LOCAL_STUDIO_API_KEY "$API_KEY"
   log "wrote $ENV_FILE"
 fi
 if [ -z "$HOST_WAS_SET" ] && grep -q '^LOCAL_STUDIO_HOST=' "$ENV_FILE"; then HOST="$(read_env_value LOCAL_STUDIO_HOST)"; fi
