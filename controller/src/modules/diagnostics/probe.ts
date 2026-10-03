@@ -117,6 +117,9 @@ export const runQualificationProbe = (
       catalog.reachable ? "" : "GET /v1/models did not answer; identity came from the completion response alone.",
       model.matched ? "" : `model id ${input.model} is not in /v1/models.`,
       attempt.stream_observed ? "" : "the runtime answered a streaming request with a single JSON body, so no first-token time is observable",
+      attempt.stream_observed && anatomy !== null && anatomy.finish_reason === null
+        ? "the stream closed without a finish_reason frame, so the turn may be incomplete even though content arrived"
+        : "",
     ]);
 
     return {

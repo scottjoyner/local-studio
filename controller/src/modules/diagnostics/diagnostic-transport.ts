@@ -27,20 +27,36 @@ export interface TransportAttempt {
 interface Accumulator {
   content: string;
   reasoning: string;
-  toolCalls: number;
+  /**
+   * Distinct tool-call identifiers seen so far. A streamed call arrives as one
+   * frame carrying its id and name followed by further frames carrying argument
+   * fragments, all keyed by the same `index`, so counting entries per frame
+   * would report one call as however many argument chunks it took.
+   */
+  toolCallKeys: Set<string>;
   finishReason: string | null;
   usage: Rec | null;
   frames: number;
+  sawFinishReason: boolean;
 }
 
 const emptyAccumulator = (): Accumulator => ({
   content: "",
   reasoning: "",
-  toolCalls: 0,
+  toolCallKeys: new Set(),
   finishReason: null,
   usage: null,
   frames: 0,
+  sawFinishReason: false,
 });
+
+const toolCallKey = (call: unknown, position: number): string => {
+  if (isRec(call)) {
+    if (typeof call["index"] === "number") return `index:${call["index"]}`;
+    if (typeof call["id"] === "string" && call["id"] !== "") return `id:${call["id"]}`;
+  }
+  return `frame:${position}`;
+};
 
 const joinUrl = (baseUrl: string, path: string): string =>
   `${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
@@ -76,6 +92,7 @@ const mergeFrame = (accumulator: Accumulator, payload: unknown): void => {
     if (!isRec(choice)) continue;
     if (typeof choice["finish_reason"] === "string" && choice["finish_reason"]) {
       accumulator.finishReason = choice["finish_reason"];
+      accumulator.sawFinishReason = true;
     }
     const delta = isRec(choice["delta"])
       ? choice["delta"]
@@ -86,15 +103,17 @@ const mergeFrame = (accumulator: Accumulator, payload: unknown): void => {
     accumulator.content += deltaText(delta["content"]);
     accumulator.reasoning += firstReasoningField(delta);
     const calls = delta["tool_calls"];
-    if (Array.isArray(calls)) accumulator.toolCalls += calls.length;
+    if (Array.isArray(calls)) {
+      calls.forEach((call, position) => accumulator.toolCallKeys.add(toolCallKey(call, position)));
+    }
   }
 };
 
 const assembledBody = (accumulator: Accumulator): Rec => {
   const message: Rec = { role: "assistant", content: accumulator.content };
   if (accumulator.reasoning) message["reasoning_content"] = accumulator.reasoning;
-  if (accumulator.toolCalls > 0) {
-    message["tool_calls"] = Array.from({ length: accumulator.toolCalls }, (_, index) => ({
+  if (accumulator.toolCallKeys.size > 0) {
+    message["tool_calls"] = Array.from({ length: accumulator.toolCallKeys.size }, (_, index) => ({
       index,
       type: "function",
     }));

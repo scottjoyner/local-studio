@@ -109,6 +109,17 @@ now pins the support table and the reachability claim.
 `reasoning_tokens`, the detected `shape`, and the `observed_fields` present on
 the body.
 
+`tool_call_count` counts **distinct** calls, identified by the stream-local
+`index` and falling back to the call `id`. A streamed call arrives as one frame
+carrying its id and name followed by further frames carrying argument
+fragments under the same `index`, so counting entries per frame reports one call
+as however many argument chunks it happened to take.
+
+A stream that closes without a `finish_reason` frame is annotated in `evidence`
+rather than trusted: the content that arrived may be an incomplete turn, and none
+of the nine classifications describes that case honestly, so the probe says so
+instead of guessing.
+
 Inline `<think>` residue is detected with the proxy's own extractor, so the
 probe and the serving path agree on what counts as reasoning. This matters: a
 runtime started with `--reasoning-format auto` returns thoughts inside

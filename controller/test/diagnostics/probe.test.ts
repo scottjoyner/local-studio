@@ -320,7 +320,7 @@ test("properly separated reasoning keeps the separation directive SUPPORTED", as
   expect(report.reasoning.separation.state).toBe("SUPPORTED");
 });
 
-test("tool calls streamed across frames are counted without becoming content", async () => {
+test("two tool calls streamed across frames are counted once each", async () => {
   const report = await probe(
     withModelCatalog(() =>
       openStream([
@@ -351,6 +351,82 @@ test("tool calls streamed across frames are counted without becoming content", a
   expect(report.anatomy?.finish_reason).toBe("tool_calls");
   expect(report.result.content_length).toBe(0);
   expect(report.result.classification).toBe("EMPTY_FINAL_CONTENT");
+});
+
+test("one tool call split across argument frames is counted once", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "call_abc", type: "function", function: { name: "add", arguments: "" } },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }),
+        sseFrame({
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: [{ index: 0, function: { arguments: "{\"a\":" } }] },
+              finish_reason: null,
+            },
+          ],
+        }),
+        sseFrame({
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: [{ index: 0, function: { arguments: "1,\"b\":2}" } }] },
+              finish_reason: null,
+            },
+          ],
+        }),
+        finishFrame("tool_calls"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.anatomy?.tool_call_count).toBe(1);
+});
+
+test("tool calls identified only by id are still counted once", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [
+            { index: 0, delta: { tool_calls: [{ id: "call_x", function: { name: "a" } }] }, finish_reason: null },
+          ],
+        }),
+        sseFrame({
+          choices: [
+            { index: 0, delta: { tool_calls: [{ id: "call_x", function: { arguments: "1" } }] }, finish_reason: null },
+          ],
+        }),
+        finishFrame("tool_calls"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.anatomy?.tool_call_count).toBe(1);
+});
+
+test("a stream that closes without a finish_reason is annotated rather than trusted", async () => {
+  const report = await probe(
+    withModelCatalog(() => openStream([deltaFrame("partial answer")])),
+    fastProfile(),
+  );
+  expect(report.anatomy?.finish_reason).toBeNull();
+  expect(
+    report.evidence.some((line) => line.includes("closed without a finish_reason frame")),
+  ).toBe(true);
 });
 
 test("inline monologue on a grounding profile with no budget is still IGNORED_BY_ENGINE", async () => {
