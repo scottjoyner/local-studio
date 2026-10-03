@@ -173,7 +173,7 @@ test("evidence records the engine's real limits and carries no hardware placemen
   }
 });
 
-test("evidence for a vLLM recipe records the missing budget flag", async () => {
+test("evidence for a vLLM recipe records its per-request budget field", async () => {
   writeRegistry(
     registryWith(
       {
@@ -193,12 +193,11 @@ test("evidence for a vLLM recipe records the missing budget flag", async () => {
   if (!profile) throw new Error("short_reasoning profile is missing");
   const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
 
-  expect(evidence.reasoning.state).toBe("UNSUPPORTED");
+  expect(evidence.reasoning.state).toBe("SUPPORTED");
+  expect(evidence.reasoning.request_field).toBe("thinking_token_budget");
+  expect(evidence.reasoning.applies_to_request).toBe(true);
   expect(evidence.reasoning.engine_flag).toBeNull();
   expect(evidence.reasoning.requested).toBe(1_024);
-  expect(evidence.known_incompatibilities.map((entry) => entry.id)).toContain(
-    "reasoning.no_budget_flag",
-  );
 });
 
 test("a recipe budget is not measured against the probe profile's output cap", async () => {

@@ -1,4 +1,7 @@
-import type { DiagnosticProfile } from "@local-studio/contracts/inference-diagnostics";
+import type {
+  DiagnosticProfile,
+  ReasoningBudgetResolution,
+} from "@local-studio/contracts/inference-diagnostics";
 import { ensureStreamingUsageIncluded } from "../proxy/chat-request";
 
 type Rec = Record<string, unknown>;
@@ -33,16 +36,41 @@ export const boundedOutputField = (engine: string | null): BoundedOutputField =>
 export interface DiagnosticRequestBody {
   readonly body: Rec;
   readonly bounded_output: BoundedOutputField;
+  /** True when a reasoning budget actually reached the wire. */
+  readonly reasoning_budget_sent: boolean;
 }
+
+/**
+ * Sends the reasoning budget only where the engine declared a real per-request
+ * equivalent. A server-side flag cannot be set from a request, so claiming
+ * SUPPORTED and then sending nothing would be an unfalsifiable claim.
+ */
+const applyReasoningBudget = (
+  body: Rec,
+  budget: ReasoningBudgetResolution | null,
+): boolean => {
+  if (
+    budget === null ||
+    !budget.applies_to_request ||
+    budget.request_field === null ||
+    budget.requested === null
+  ) {
+    return false;
+  }
+  body[budget.request_field] = budget.requested;
+  return true;
+};
 
 export const buildDiagnosticRequestBody = ({
   profile,
   model,
   engine,
+  reasoningBudget = null,
 }: {
   profile: DiagnosticProfile;
   model: string;
   engine: string | null;
+  reasoningBudget?: ReasoningBudgetResolution | null;
 }): DiagnosticRequestBody => {
   const bound = boundedOutputField(engine);
   const body: Rec = {
@@ -54,8 +82,9 @@ export const buildDiagnosticRequestBody = ({
     stream: profile.stream,
   };
   if (profile.stop.length > 0) body["stop"] = [...profile.stop];
+  const reasoning_budget_sent = applyReasoningBudget(body, reasoningBudget);
   if (profile.stream) ensureStreamingUsageIncluded(body);
-  return { body, bounded_output: bound };
+  return { body, bounded_output: bound, reasoning_budget_sent };
 };
 
 export const groundedAnswerMatches = (

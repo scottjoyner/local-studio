@@ -63,14 +63,19 @@ handed cannot change the profile the next probe uses.
 One logical field, `max_thinking_tokens`, resolved per engine. Support is
 never assumed.
 
-| Engine | State | Mechanism | Flag | Reachable from a request? |
+| Engine | State | Mechanism | Field | Reachable from a request? |
 | --- | --- | --- | --- | --- |
 | `llamacpp` | `SUPPORTED` | `server_flag` | `--reasoning-budget` | No — fixed at launch |
-| `vllm` | `UNSUPPORTED` | `none` | — | No |
+| `vllm` | `SUPPORTED` | `request_field` | `thinking_token_budget` | Yes — top-level in the request body |
 | `sglang` | `UNSUPPORTED` | `none` | — | No |
 | `mlx` | `UNSUPPORTED` | `none` | — | No |
 | `exllamav3` | `UNSUPPORTED` | `none` | — | No |
 | undeclared / other | `UNSUPPORTED` | `none` | — | No |
+
+This table was verified against upstream sources rather than assumed; see
+§3a for what verification changed. A `SUPPORTED` claim is load-bearing: when the
+mechanism is a request field, the probe actually sends it, because claiming
+support and then sending nothing would be unfalsifiable.
 
 States:
 
@@ -82,8 +87,32 @@ States:
   output cap.
 
 `vLLM` and `SGLang` expose `--reasoning-parser`, which decides *where* reasoning
-is reported, not *how much* is generated. That is a separation control, not a
-budget control, and the table keeps the two dimensions apart.
+is reported. That is a separation control and the table keeps the two
+dimensions apart from the budget control.
+
+`thinking_token_budget` is a genuinely different lever: it caps how much
+reasoning is generated, and vLLM enforces it by forcing the model to emit the
+reasoning end token once the count is reached. It carries two preconditions
+that make it silently inert when unmet, which is why the probe verifies the
+budget was honored instead of assuming it:
+
+- The server must have been started with `--reasoning-parser`, which also
+  supplies the reasoning boundary tokens (or they come from
+  `--reasoning-config`).
+- Only models whose parser defines those boundary tokens support it —
+  Qwen3, DeepSeek and Nemotron3 are documented. On any other model the field is
+  accepted and does nothing.
+
+When a budget was sent and the runtime reported more reasoning tokens than were
+allowed, the resolution is downgraded to `IGNORED_BY_ENGINE`. That is the only
+way this probe will ever call a budget ignored: a budget it did not send, or one
+whose token count it could not observe, is left alone rather than judged.
+
+`llama-server`'s `--reasoning-budget` has three properties worth recording: it
+re-arms for every thinking block rather than covering the whole response, it is
+disabled under backend sampling, and older builds accepted only `-1` or `0` and
+refused to start on a positive budget. A recipe carrying a positive budget
+against an older image fails at launch, not at request time.
 
 `INVALID_CONFIGURATION` covers a value that is unusable on its own — negative or
 non-integer — and, **only when an output cap is actually in play**, a budget
@@ -93,6 +122,30 @@ because a recipe's declared budget is a property of the recipe and not of
 whichever probe happens to read it. `compared_against_output_cap` records which
 scope applied (`null` when none did). Getting this wrong makes a perfectly good
 recipe look misconfigured merely because a probe ran with a tighter output cap.
+
+### 3a. What verification changed
+
+The support table was initially written from the repository's own usage and was
+**wrong about vLLM**. Verifying it against upstream documentation on
+2026-10-02 (vLLM docs dated 2026-10-01) corrected four things:
+
+1. **vLLM does have a per-request reasoning budget** — `thinking_token_budget`,
+   top-level in the request body. It was recorded as `UNSUPPORTED`, which is the
+   opposite error from faking support: declaring a real capability absent.
+2. **vLLM's reasoning field is `reasoning`, not `reasoning_content`.** Its docs
+   warn that reading `reasoning_content` "could silently read an empty value,
+   even when `reasoning` is populated". The proxy's `firstReasoningField` checks
+   `reasoning_content`, `reasoning` and `reasoning_text` in that order, so it
+   resolves correctly for all three engines — but callers that assume
+   `reasoning_content` on vLLM are reading an empty string.
+3. **llama.cpp `--reasoning-format` now defaults to `auto`, which behaves like
+   `deepseek`.** The failure this work describes — reasoning arriving inside
+   `content` — was the behaviour of older builds, and is why the repository
+   pins `--reasoning-format deepseek` explicitly. It is not what a current
+   llama-server does by default.
+4. **`llama-server` now separates reasoning in streaming too.** That limitation
+   was removed upstream, so an older pinned image can leave reasoning inline in
+   streamed deltas where a current one would not.
 
 `llama.cpp` behavior already in the tree, verified while building this:
 `compute/bridge.ts` pushes `--reasoning-budget` only for `llamacpp`, only when
@@ -121,9 +174,15 @@ of the nine classifications describes that case honestly, so the probe says so
 instead of guessing.
 
 Inline `<think>` residue is detected with the proxy's own extractor, so the
-probe and the serving path agree on what counts as reasoning. This matters: a
-runtime started with `--reasoning-format auto` returns thoughts inside
-`content`, which looks like a 900-token answer and is not one.
+probe and the serving path agree on what counts as reasoning. An older pinned
+llama-server that leaves reasoning inline turns a request for a plan into what
+looks like a 900-token answer and is not one — that is the failure the
+repository's `--reasoning-format deepseek` default addresses.
+
+A `reasoning_tokens` of `null` means *unobservable*, not *zero*. On vLLM,
+`completion_tokens_details` is omitted entirely unless the server was started
+with a reasoning parser, so a null there says nothing about how much reasoning
+was produced; the probe annotates this rather than treating it as a measurement.
 
 ### What the probe cannot see
 

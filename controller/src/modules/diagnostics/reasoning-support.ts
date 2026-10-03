@@ -92,7 +92,7 @@ const SUPPORT: Readonly<Record<Backend, EngineReasoningSupport>> = {
   llamacpp: {
     ...serverFlagBudget(
       "--reasoning-budget",
-      "llama-server bounds reasoning with --reasoning-budget. The value is fixed when the server starts, so a request against an already-running runtime cannot change it.",
+      "llama-server bounds each thinking block with --reasoning-budget, re-arming the budget for every block. The value is fixed when the server starts, so a request against an already-running runtime cannot change it. Positive budgets need a build new enough to accept them; older llama-server only allowed -1 or 0 and would refuse to start.",
     ),
     ...serverFlagSeparation(
       "--reasoning-format",
@@ -100,7 +100,12 @@ const SUPPORT: Readonly<Record<Backend, EngineReasoningSupport>> = {
     ),
   },
   vllm: {
-    ...unsupportedBudget(NO_BUDGET_FLAG),
+    budget_state: "SUPPORTED",
+    budget_mechanism: "request_field",
+    budget_engine_flag: null,
+    budget_request_field: "thinking_token_budget",
+    budget_detail:
+      "vLLM takes a top-level thinking_token_budget per request and forces the model to emit the reasoning end token once reached. It only takes effect when the server was started with --reasoning-parser, and only for models whose parser defines reasoning boundary tokens. On any other model the field is accepted and silently does nothing, so the probe verifies the budget was honored instead of assuming it.",
     ...serverFlagSeparation(
       "--reasoning-parser",
       "vLLM moves a recognized reasoning span out of content into reasoning_content. It controls where reasoning is reported, not how much is generated.",
@@ -207,6 +212,31 @@ export const resolveReasoningBudget = ({
     request_field: support.budget_request_field,
     applies_to_request: support.budget_mechanism === "request_field",
     detail: support.budget_detail,
+  };
+};
+
+/**
+ * Downgrades a claimed per-request budget when the response shows reasoning
+ * running past the budget that was sent. Only ever fires on a sent budget with
+ * an observed token count, so an unobservable budget is never reported as
+ * honored or ignored.
+ */
+export const observeReasoningBudget = (
+  resolution: ReasoningBudgetResolution,
+  observation: {
+    sent: boolean;
+    reasoningTokens: number | null;
+    reasoningLength: number;
+  },
+): ReasoningBudgetResolution => {
+  if (!observation.sent || resolution.state !== "SUPPORTED") return resolution;
+  if (!resolution.applies_to_request) return resolution;
+  if (observation.reasoningTokens === null || resolution.requested === null) return resolution;
+  if (observation.reasoningTokens <= resolution.requested) return resolution;
+  return {
+    ...resolution,
+    state: "IGNORED_BY_ENGINE",
+    detail: `${resolution.request_field} was sent with ${resolution.requested} but the runtime reported ${observation.reasoningTokens} reasoning tokens, so the budget did not take effect on this model.`,
   };
 };
 

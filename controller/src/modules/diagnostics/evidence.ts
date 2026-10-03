@@ -84,9 +84,9 @@ const incompatibleKnobs = (backend: Backend): RecipeIncompatibility[] =>
 const ENGINE_INCOMPATIBILITIES: Readonly<Record<Backend, readonly RecipeIncompatibility[]>> = {
   vllm: [
     {
-      id: "reasoning.no_budget_flag",
+      id: "reasoning.budget_needs_parser_and_model_support",
       detail:
-        "vLLM exposes no reasoning token budget flag. reasoning_parser only decides where reasoning is reported, so a bounded run can still return no final content.",
+        "thinking_token_budget only takes effect when the server was started with --reasoning-parser, and only for models whose parser defines reasoning boundary tokens. On any other model the field is accepted and silently does nothing, so a bounded run can still return no final content.",
       blocks: "short_reasoning",
     },
   ],
@@ -102,7 +102,7 @@ const ENGINE_INCOMPATIBILITIES: Readonly<Record<Backend, readonly RecipeIncompat
     {
       id: "reasoning.budget_is_launch_time_only",
       detail:
-        "--reasoning-budget is fixed when llama-server starts, so a running runtime cannot be re-budgeted from a request and a probe cannot verify the effective value.",
+        "--reasoning-budget is fixed when llama-server starts, so a running runtime cannot be re-budgeted from a request and a probe cannot verify the effective value. Older llama-server builds only accepted -1 or 0 and refused to start on a positive budget, and the budget re-arms for every thinking block and is disabled under backend sampling.",
       blocks: "short_reasoning",
     },
     ...incompatibleKnobs("llamacpp"),

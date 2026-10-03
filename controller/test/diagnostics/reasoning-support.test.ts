@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  observeReasoningBudget,
   observeReasoningSeparation,
   reasoningSeparationFor,
   resolveReasoningBudget,
@@ -28,14 +29,61 @@ test("llama.cpp reports the launch-time budget flag it actually has", () => {
   expect(resolution.applies_to_request).toBe(false);
 });
 
-test("vLLM and SGLang report the budget as unsupported rather than faking it", () => {
-  for (const engine of ["vllm", "sglang", "mlx"]) {
+test("vLLM reports its real per-request reasoning budget", () => {
+  const resolution = resolveReasoningBudget({ engine: "vllm", requested: 256, maxOutputTokens: 512 });
+  expect(resolution.state).toBe("SUPPORTED");
+  expect(resolution.mechanism).toBe("request_field");
+  expect(resolution.request_field).toBe("thinking_token_budget");
+  expect(resolution.engine_flag).toBeNull();
+  expect(resolution.applies_to_request).toBe(true);
+});
+
+test("SGLang and MLX report the budget as unsupported rather than faking it", () => {
+  for (const engine of ["sglang", "mlx"]) {
     const resolution = resolveReasoningBudget({ engine, requested: 256, maxOutputTokens: 512 });
     expect(resolution.state).toBe("UNSUPPORTED");
     expect(resolution.mechanism).toBe("none");
     expect(resolution.engine_flag).toBeNull();
     expect(resolution.request_field).toBeNull();
   }
+});
+
+test("a budget the runtime ignored is downgraded only when it was actually sent", () => {
+  const supported = resolveReasoningBudget({ engine: "vllm", requested: 256, maxOutputTokens: 512 });
+  expect(
+    observeReasoningBudget(supported, {
+      sent: true,
+      reasoningTokens: 900,
+      reasoningLength: 3_000,
+    }).state,
+  ).toBe("IGNORED_BY_ENGINE");
+  expect(
+    observeReasoningBudget(supported, { sent: true, reasoningTokens: 120, reasoningLength: 400 })
+      .state,
+  ).toBe("SUPPORTED");
+  expect(
+    observeReasoningBudget(supported, { sent: false, reasoningTokens: 900, reasoningLength: 3_000 })
+      .state,
+  ).toBe("SUPPORTED");
+  expect(
+    observeReasoningBudget(supported, { sent: true, reasoningTokens: null, reasoningLength: 3_000 })
+      .state,
+  ).toBe("SUPPORTED");
+});
+
+test("an unobservable budget is never reported as honored or ignored", () => {
+  const unsupported = resolveReasoningBudget({
+    engine: "llamacpp",
+    requested: 256,
+    maxOutputTokens: 512,
+  });
+  expect(
+    observeReasoningBudget(unsupported, {
+      sent: true,
+      reasoningTokens: 900,
+      reasoningLength: 3_000,
+    }).state,
+  ).toBe("SUPPORTED");
 });
 
 test("an undeclared engine is unsupported, not assumed capable", () => {
@@ -149,6 +197,44 @@ test("a built request carries the cap, the temperature, and streaming usage", ()
   expect(body["stream"]).toBe(true);
   expect(body["stream_options"]).toEqual({ include_usage: true });
   expect(body["model"]).toBe("candidate");
+});
+
+test("a vLLM request carries thinking_token_budget when the profile budgets reasoning", () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const resolution = resolveReasoningBudget({
+    engine: "vllm",
+    requested: profile.reasoning_budget_tokens,
+    maxOutputTokens: profile.max_output_tokens,
+  });
+  const { body, reasoning_budget_sent } = buildDiagnosticRequestBody({
+    profile,
+    model: "candidate",
+    engine: "vllm",
+    reasoningBudget: resolution,
+  });
+  expect(reasoning_budget_sent).toBe(true);
+  expect(body["thinking_token_budget"]).toBe(256);
+  expect(body["max_completion_tokens"]).toBe(256);
+});
+
+test("a llama.cpp request carries no reasoning budget because the flag is launch-time only", () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const resolution = resolveReasoningBudget({
+    engine: "llamacpp",
+    requested: profile.reasoning_budget_tokens,
+    maxOutputTokens: profile.max_output_tokens,
+  });
+  const { body, reasoning_budget_sent } = buildDiagnosticRequestBody({
+    profile,
+    model: "candidate",
+    engine: "llamacpp",
+    reasoningBudget: resolution,
+  });
+  expect(reasoning_budget_sent).toBe(false);
+  expect(body["thinking_token_budget"]).toBeUndefined();
+  expect(Object.keys(body).some((key) => key.includes("budget"))).toBe(false);
 });
 
 test("a llama.cpp request bounds with max_tokens instead", () => {

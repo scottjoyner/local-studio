@@ -14,6 +14,7 @@ import {
   reasoningConsumedBudget,
 } from "./classification";
 import {
+  observeReasoningBudget,
   observeReasoningSeparation,
   reasoningSeparationFor,
   resolveReasoningBudget,
@@ -78,10 +79,11 @@ export const runQualificationProbe = (
     });
     const separation: ReasoningSeparationResolution = reasoningSeparationFor(input.engine);
 
-    const { body, bounded_output } = buildDiagnosticRequestBody({
+    const { body, bounded_output, reasoning_budget_sent } = buildDiagnosticRequestBody({
       profile: input.profile,
       model: input.model,
       engine: input.engine,
+      reasoningBudget: budget,
     });
 
     const attempt = yield* attemptDiagnosticRequest({
@@ -108,12 +110,21 @@ export const runQualificationProbe = (
     const resolvedSeparation = observeReasoningSeparation(separation, {
       separated: anatomy !== null && !anatomy.reasoning_merged_into_content,
     });
+    const resolvedBudget = observeReasoningBudget(budget, {
+      sent: reasoning_budget_sent,
+      reasoningTokens: anatomy?.reasoning_tokens ?? null,
+      reasoningLength: anatomy?.reasoning.length ?? 0,
+    });
     const consumed = reasoningConsumedBudget(anatomy);
 
     const notes = evidence([
       ...outcome.evidence,
       bounded_output.reason,
-      `reasoning budget state ${budget.state}: ${budget.detail}`,
+      `reasoning budget state ${resolvedBudget.state}: ${resolvedBudget.detail}`,
+      reasoning_budget_sent ? "" : "no reasoning budget reached the request for this engine",
+      input.engine === "vllm" && anatomy !== null && anatomy.reasoning_tokens === null
+        ? "vLLM omits completion_tokens_details without a reasoning parser, so reasoning tokens are unobservable here"
+        : "",
       catalog.reachable ? "" : "GET /v1/models did not answer; identity came from the completion response alone.",
       model.matched ? "" : `model id ${input.model} is not in /v1/models.`,
       attempt.stream_observed ? "" : "the runtime answered a streaming request with a single JSON body, so no first-token time is observable",
@@ -166,7 +177,7 @@ export const runQualificationProbe = (
           ? groundedAnswerMatches(input.profile, anatomy.content)
           : null,
       },
-      reasoning: { budget, separation: resolvedSeparation },
+      reasoning: { budget: resolvedBudget, separation: resolvedSeparation },
       anatomy,
       evidence: notes,
     };
