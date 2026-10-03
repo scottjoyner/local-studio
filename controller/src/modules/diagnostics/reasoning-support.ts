@@ -145,12 +145,13 @@ const invalid = (detail: string): ReasoningBudgetResolution => ({
   engine_flag: null,
   request_field: null,
   applies_to_request: false,
+  compared_against_output_cap: null,
   detail,
 });
 
 const budgetInvalidity = (
   requested: number,
-  maxOutputTokens: number,
+  maxOutputTokens: number | null,
 ): string | null => {
   if (!Number.isInteger(requested)) {
     return `max_thinking_tokens ${requested} is not an integer; the field counts tokens.`;
@@ -158,8 +159,8 @@ const budgetInvalidity = (
   if (requested < 0) {
     return `max_thinking_tokens ${requested} is negative; a token budget cannot be negative.`;
   }
-  if (requested > maxOutputTokens) {
-    return `max_thinking_tokens ${requested} exceeds the profile max_output_tokens ${maxOutputTokens}, leaving no room for a final answer.`;
+  if (maxOutputTokens !== null && requested > maxOutputTokens) {
+    return `max_thinking_tokens ${requested} exceeds the output cap ${maxOutputTokens}, leaving no room for a final answer.`;
   }
   return null;
 };
@@ -189,7 +190,7 @@ export const resolveReasoningBudget = ({
 }: {
   engine: string | null;
   requested: number | null;
-  maxOutputTokens: number;
+  maxOutputTokens: number | null;
 }): ReasoningBudgetResolution => {
   if (requested !== null) {
     const problem = budgetInvalidity(requested, maxOutputTokens);
@@ -199,6 +200,7 @@ export const resolveReasoningBudget = ({
   return {
     field: "max_thinking_tokens",
     requested,
+    compared_against_output_cap: maxOutputTokens,
     state: support.budget_state,
     mechanism: support.budget_mechanism,
     engine_flag: support.budget_engine_flag,

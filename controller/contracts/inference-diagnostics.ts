@@ -43,6 +43,8 @@ export interface ReasoningBudgetResolution {
   readonly field: "max_thinking_tokens";
   readonly requested: number | null;
   readonly state: ReasoningBudgetState;
+  /** Output cap the budget was checked against, or null when none is in play. */
+  readonly compared_against_output_cap: number | null;
   readonly mechanism: ReasoningBudgetMechanism;
   readonly engine_flag: string | null;
   readonly request_field: string | null;
