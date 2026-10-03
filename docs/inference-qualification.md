@@ -79,12 +79,32 @@ support and then sending nothing would be unfalsifiable.
 
 States:
 
-- `SUPPORTED` — the engine has a real equivalent and it is named.
+- `SUPPORTED` — the engine has a real equivalent, it is named, and either it was
+  verified or it is a launch-time flag whose existence is known.
 - `UNSUPPORTED` — the engine has no equivalent. Reported, never faked.
-- `IGNORED_BY_ENGINE` — a directive was expected to apply and the runtime
-  answered without it taking effect. Reached from observation, not assumption.
+- `IGNORED_BY_ENGINE` — a directive reached the wire and the response shows it
+  had no effect. Reached from observation, not assumption.
 - `INVALID_CONFIGURATION` — negative, non-integer, or larger than the profile's
   output cap.
+- `UNOBSERVED` — the directive exists but no usable response arrived, so whether
+  it was honoured could not be determined. **Not** the same as `SUPPORTED`.
+
+`UNOBSERVED` exists because the first version of this collapsed it into one of
+the others and asserted a cause it had no evidence for. A transport failure
+reported `IGNORED_BY_ENGINE` with a detail claiming the runtime had answered 200
+— an operator would have been sent looking at a model and template when the
+runtime was not running at all. The observation is now a tri-state
+(`separated` | `inline` | `unobserved`) so that mispairing cannot be expressed.
+
+Rules for reading the states:
+
+| situation | budget state | separation state |
+| --- | --- | --- |
+| sent, measured within the cap | `SUPPORTED` | per the response |
+| sent, measured over the cap | `IGNORED_BY_ENGINE` | per the response |
+| sent, no usable response | `UNOBSERVED` | `UNOBSERVED` |
+| never sent (launch-time flag) | `SUPPORTED` | per the response |
+| engine has no such directive | `UNSUPPORTED` | `UNSUPPORTED` |
 
 `vLLM` and `SGLang` expose `--reasoning-parser`, which decides *where* reasoning
 is reported. That is a separation control and the table keeps the two
@@ -409,7 +429,92 @@ the prompt, or that produces unusable output — is a **successful** Effect
 carrying a classification. Consumers should branch on
 `report.result.classification`, not on the Effect's success.
 
-## 10. Authority boundaries preserved
+## 9a. Findings from mapping authority (not fixed here)
+
+Two verified defects in the recipe→launch path surfaced while mapping the
+authority surface. Both are recorded rather than fixed: each changes what
+reaches an engine at launch, which is production deployment authority and
+explicitly outside this work.
+
+**`enable_auto_tool_choice` never reaches the engine.** It is declared in
+`contracts/recipes.ts`, validated in `recipe-serializer.ts`, set to `true` by a
+starter preset in `studio/configs.ts`, and rendered in the recipe editor — but it
+is not a member of `ServingOptions` (`compute/contracts.ts:115-128`) and is not
+passed by `recipeToLaunchInput` (`compute/bridge.ts:257-268`). vLLM emits
+`--enable-auto-tool-choice` as an unconditional companion of
+`--tool-call-parser` (`engines/vllm.ts:26`). The consequence is that a recipe
+with `enable_auto_tool_choice: false` still gets the flag, and a recipe with
+`enable_auto_tool_choice: true` and no parser gets nothing. The frontend command
+preview implements the correct semantics, so the preview and the real launch
+disagree.
+
+**`extra_args` silently outranks every typed recipe field.**
+`mergeArguments` (`engines/shared.ts:108-125`) deletes a base flag and its value
+whenever `extra_args` supplies the same key, then appends. So
+`extra_args["max_model_len"] = 65536` overrides the `max_model_len` field with no
+warning. `extra_args` is a shadow authority with higher precedence than the
+typed shape, and the type does not say so.
+
+Neither is diagnosed by this probe — both are launch-time facts. A probe run
+against an already-running runtime cannot observe either, which is part of why
+they are recorded here rather than in the classification set.
+
+## 10. First real run
+
+Eight defects were found while building this, every one of them at the seam
+between this code and a real engine, and not one of them caught by the 83
+stub-backed tests. Verify against a live runtime before trusting a
+classification.
+
+Pick a **reasoning model**. `protocol_canary` will pass against a runtime that
+`short_reasoning` exposes as `REASONING_ONLY` — that gap between "canaries
+passed" and "grounding failed" is the whole reason this tool exists.
+
+```bash
+# vLLM
+npm run probe:runtime -- \
+  --base-url http://<host>:<port> --model <served-model-name> \
+  --profile short_reasoning --engine vllm
+
+# llama.cpp
+npm run probe:runtime -- \
+  --base-url http://<host>:<port> --model <alias-or-gguf-name> \
+  --profile short_reasoning --engine llamacpp \
+  --engine-image <image ref>
+
+# SGLang
+npm run probe:runtime -- \
+  --base-url http://<host>:<port> --model <served-model-name> \
+  --profile short_reasoning --engine sglang
+```
+
+Exit status is `0` only for `OUTPUT_OK`. Then read, in order:
+
+1. `result.classification` — the headline.
+2. `result.reasoning_consumed_budget` — true means reasoning absorbed the output
+   cap. This is the `REASONING_ONLY` / `LENGTH_TRUNCATED` trap.
+3. `result.reasoning_length` vs `content_length` — how the output was spent.
+4. `reasoning.budget.state` — `IGNORED_BY_ENGINE` means the budget was sent and
+   did not take effect. On vLLM that is the expected outcome when the server was
+   started without `--reasoning-parser`, or on a model whose parser defines no
+   reasoning boundary tokens.
+5. `reasoning.separation.state` — `IGNORED_BY_ENGINE` means reasoning arrived
+   inline instead of in its own field.
+6. `timing.ttft_ms` and `timing.tokens_per_second` — `tokens_per_second` is
+   `null` when the generation window was under 10 ms, by design.
+7. `evidence` — every line is a machine-readable reason, not prose.
+
+Run all four profiles. A model that is `OUTPUT_OK` on the canary and
+`REASONING_ONLY` on `short_reasoning` is exactly the configuration this tool is
+for, and the pair of reports is the artifact worth keeping.
+
+Two things a first run cannot settle: how your `:latest` llama.cpp image compares
+to the `master` build the flag documentation was verified against, and whether a
+given vLLM server was started with `--reasoning-parser` — without it
+`thinking_token_budget` is inert and reasoning tokens are unobservable, which the
+report states rather than guessing.
+
+## 11. Authority boundaries preserved
 
 Unchanged, and deliberately unreachable from this code: provider routing,
 production admission, model automatic start/stop policy, deployment authority,
@@ -417,7 +522,7 @@ request-authority security, and agent dispatch. No controller route was added,
 so no new public surface was created on the production controller. The probe
 reads two HTTP endpoints and writes nothing.
 
-## 11. Tests
+## 12. Tests
 
 `controller/test/diagnostics/` runs under `bun test`, wired into
 `controller`'s `check`.
