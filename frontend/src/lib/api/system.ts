@@ -70,14 +70,22 @@ export function createSystemApi(core: ApiCore) {
         retries: 0,
       }),
 
-    evict: (): Promise<{ success: boolean; evicted_pid?: number }> =>
-      core.request("/evict", { method: "POST" }),
-
-    waitReady: (timeout = 300): Promise<{ ready: boolean; elapsed: number; error?: string }> =>
-      core.request(`/wait-ready?timeout=${timeout}`, {
-        timeout: (timeout + 15) * 1000,
-        retries: 0,
+    evict: (instance?: string): Promise<{ success: boolean; evicted_pid?: number }> =>
+      core.request(`/evict${instance ? `?instance=${encodeURIComponent(instance)}` : ""}`, {
+        method: "POST",
       }),
+
+    waitReady: (
+      timeout = 300,
+      instance?: string,
+    ): Promise<{ ready: boolean; elapsed: number; instance?: string | null; error?: string }> =>
+      core.request(
+        `/wait-ready?timeout=${timeout}${instance ? `&instance=${encodeURIComponent(instance)}` : ""}`,
+        {
+          timeout: (timeout + 15) * 1000,
+          retries: 0,
+        },
+      ),
 
     getOpenAIModels: (): Promise<{
       data: Array<{ id: string; root?: string; max_model_len?: number }>;

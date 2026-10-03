@@ -45,7 +45,8 @@ export const registerLifecycleRoutes = defineRoutes((app, context) =>
       effectHandler((ctx) =>
         Effect.gen(function* () {
           const recipeId = ctx.req.param("recipeId") ?? "";
-          const cancelled = yield* context.bridge.cancelLaunch();
+          const instance = ctx.req.query("instance") ?? undefined;
+          const cancelled = yield* context.bridge.cancelLaunch(instance);
           if (!cancelled) {
             return yield* Effect.fail(notFound(`No launch in progress for ${recipeId}`));
           }
@@ -59,12 +60,21 @@ export const registerLifecycleRoutes = defineRoutes((app, context) =>
       documentRoute,
       effectHandler((ctx) =>
         Effect.gen(function* () {
-          yield* context.bridge
-            .evict()
+          // Absent means the default instance, as before. A named instance must be
+          // addressed explicitly, and a name that resolves to nothing is reported rather
+          // than reported as a successful eviction of the default.
+          const instance = ctx.req.query("instance") ?? undefined;
+          const evicted = yield* context.bridge
+            .evict(instance)
             .pipe(
               Effect.mapError((error) => serviceUnavailable(`Failed to evict: ${String(error)}`)),
             );
-          return ctx.json({ success: true, evicted_pid: null });
+          if (!evicted) {
+            return yield* Effect.fail(
+              notFound(instance ? `No instance named ${instance}` : "No default instance"),
+            );
+          }
+          return ctx.json({ success: true, evicted_pid: null, instance: instance ?? null });
         }),
       ),
     ),
@@ -75,11 +85,23 @@ export const registerLifecycleRoutes = defineRoutes((app, context) =>
       effectHandler((ctx) =>
         Effect.gen(function* () {
           const timeout = Number(ctx.req.query("timeout") ?? 300);
+          const instance = ctx.req.query("instance") ?? undefined;
           const start = Date.now();
-          if (yield* context.bridge.waitForHealthy(timeout * 1000)) {
-            return ctx.json({ ready: true, elapsed: Math.floor((Date.now() - start) / 1000) });
+          if (yield* context.bridge.waitForHealthy(timeout * 1000, instance)) {
+            return ctx.json({
+              ready: true,
+              elapsed: Math.floor((Date.now() - start) / 1000),
+              instance: instance ?? null,
+            });
           }
-          return ctx.json({ ready: false, elapsed: timeout, error: "Timeout waiting for backend" });
+          return ctx.json({
+            ready: false,
+            elapsed: timeout,
+            instance: instance ?? null,
+            error: instance
+              ? `Timeout waiting for instance ${instance}`
+              : "Timeout waiting for backend",
+          });
         }),
       ),
     ),

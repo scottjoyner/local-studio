@@ -59,9 +59,14 @@ export interface ComputeBridge {
     recipe: Recipe,
     instanceName?: string,
   ) => Effect.Effect<InstanceRecord, LaunchFailure>;
-  readonly evict: () => Effect.Effect<boolean>;
-  readonly cancelLaunch: () => Effect.Effect<boolean>;
-  readonly waitForHealthy: (timeoutMs: number) => Effect.Effect<boolean>;
+  /** Stop an instance. Omitting the name keeps the historical default-instance meaning. */
+  readonly evict: (instanceName?: string) => Effect.Effect<boolean>;
+  readonly cancelLaunch: (instanceName?: string) => Effect.Effect<boolean>;
+  /** Wait for an instance to report ready, defaulting to the default instance. */
+  readonly waitForHealthy: (
+    timeoutMs: number,
+    instanceName?: string,
+  ) => Effect.Effect<boolean>;
 }
 
 export interface ComputeBridgeDependencies {
@@ -394,11 +399,17 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
       });
     });
 
-  const waitForHealthy = (timeoutMs: number): Effect.Effect<boolean> =>
+  const waitForHealthy = (
+    timeoutMs: number,
+    instanceName?: string,
+  ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
+      const wanted = instanceName?.trim();
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        const record = llmRecord();
+        // A named instance has to be resolved by name; only the default is reachable
+        // through llmRecord(), so polling that alone would never observe it.
+        const record = wanted ? deps.store.read(wanted) : llmRecord();
         if (record && (yield* deps.compute.stateOf(record)) === "ready") return true;
         yield* Effect.sleep(2_000);
       }
@@ -413,8 +424,8 @@ export const createComputeBridge = (deps: ComputeBridgeDependencies): ComputeBri
     launchingRecipeId,
     launchingRecipeIds,
     launchRecipe,
-    evict: () => deps.compute.stop(LLM_INSTANCE),
-    cancelLaunch: () => deps.compute.cancel(LLM_INSTANCE),
+    evict: (instanceName?: string) => deps.compute.stop(instanceName ?? LLM_INSTANCE),
+    cancelLaunch: (instanceName?: string) => deps.compute.cancel(instanceName ?? LLM_INSTANCE),
     waitForHealthy,
   };
 };
