@@ -640,7 +640,9 @@ test("a sent budget with no parser behind it is UNOBSERVED rather than honored",
   expect(report.result.classification).toBe("OUTPUT_OK");
   expect(report.reasoning.budget.state).toBe("UNOBSERVED");
   expect(
-    report.evidence.some((line) => line.includes("omits completion_tokens_details")),
+    report.evidence.some(
+      (line) => line.includes("vllm reported no reasoning token count"),
+    ),
   ).toBe(true);
 });
 
@@ -719,4 +721,66 @@ test("a llama.cpp launch-time budget is not called unobserved when a request fai
   );
   expect(report.reasoning.budget.mechanism).toBe("server_flag");
   expect(report.reasoning.budget.state).toBe("SUPPORTED");
+});
+
+test("an engine that omits reasoning token counts says so instead of showing a bare null", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning_content: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("0.05"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.result.reasoning_tokens).toBeNull();
+  expect(report.result.reasoning_length).toBeGreaterThan(0);
+  expect(
+    report.evidence.some(
+      (line) => line.includes("reported no reasoning token count") && line.includes("null rather than zero"),
+    ),
+  ).toBe(true);
+});
+
+test("a runtime that does report reasoning tokens raises no such note", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning_content: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("0.05"),
+        finishFrame("stop"),
+        usageFrame(40, 12),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.reasoning_tokens).toBe(12);
+  expect(report.evidence.some((line) => line.includes("reported no reasoning token count"))).toBe(
+    false,
+  );
+});
+
+test("inline reasoning is lifted out of content on a real mixed response", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        deltaFrame("<think>Let me work through this.</think>"),
+        deltaFrame("LST-QUAL-4417"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.anatomy?.reasoning_merged_into_content).toBe(true);
+  expect(report.anatomy?.inlined_reasoning).toBe("Let me work through this.");
+  expect(report.result.content_length).toBe("LST-QUAL-4417".length);
+  expect(report.result.reasoning_length).toBeGreaterThan(0);
+  expect(report.reasoning.separation.state).toBe("IGNORED_BY_ENGINE");
+  expect(report.result.classification).toBe("OUTPUT_OK");
 });

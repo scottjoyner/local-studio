@@ -127,8 +127,10 @@ export const runQualificationProbe = (
       bounded_output.reason,
       `reasoning budget state ${resolvedBudget.state}: ${resolvedBudget.detail}`,
       reasoning_budget_sent ? "" : "no reasoning budget reached the request for this engine",
-      input.engine === "vllm" && anatomy !== null && anatomy.reasoning_tokens === null
-        ? "vLLM omits completion_tokens_details without a reasoning parser, so reasoning tokens are unobservable here"
+      observed &&
+      separation.state === "SUPPORTED" &&
+      anatomy.reasoning_tokens === null
+        ? `${input.engine ?? "this engine"} reported no reasoning token count, so reasoning is measured in characters only: reasoning_length is authoritative and reasoning_tokens is null rather than zero`
         : "",
       catalog.reachable ? "" : "GET /v1/models did not answer; identity came from the completion response alone.",
       model.matched ? "" : `model id ${input.model} is not in /v1/models.`,

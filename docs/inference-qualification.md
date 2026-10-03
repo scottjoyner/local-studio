@@ -514,6 +514,45 @@ given vLLM server was started with `--reasoning-parser` — without it
 `thinking_token_budget` is inert and reasoning tokens are unobservable, which the
 report states rather than guessing.
 
+### What a real run found
+
+Verified against two scratch `llama-server` instances (build `925e117`,
+`0.3.0-dev`) on a reasoning-distilled Qwen3.5 0.8B, one with
+`--reasoning-format deepseek --reasoning-budget 128` and one with
+`--reasoning-format none`, both CPU-only on a free port.
+
+**A narrow output cap fails purely because reasoning eats it.** Same model, same
+server, four profiles:
+
+| profile | output cap | classification | content | reasoning |
+| --- | --- | --- | --- | --- |
+| `protocol_canary` | 16 | `LENGTH_TRUNCATED` | 0 | 53 |
+| `exact_grounding` | 32 | `LENGTH_TRUNCATED` | 0 | 107 |
+| `short_reasoning` | 256 | `LENGTH_TRUNCATED` | 279 | 366 |
+| `bounded_code` | 256 | `OUTPUT_OK` | 58 | 443 |
+
+`reasoning_consumed_budget` was `true` on all three failures. This is the
+campaign failure reproduced in miniature: the endpoint was healthy, every request
+returned 200, and the answer was still unusable because reasoning consumed the
+budget. Raising the cap from 32 to 256 turned failure into success with no other
+change.
+
+**Inline reasoning is detected and lifted out on a real stream.** With
+`--reasoning-format none`, llama-server emits the monologue as
+`delta.content` beginning `"<think>\nLet"`. The probe reported
+`reasoning_merged_into_content: true`, `inlined_reasoning_length: 444`, and
+`separation.state: IGNORED_BY_ENGINE`, and the extracted `content` was exactly
+the answer — `\n\n```javascript\nfunction add(a, b) {...`. So the diagnosis is
+right *and* the grounded answer survives, which matters because a caller that
+only reads `content` would otherwise score this model zero.
+
+**One real gap, found and fixed.** `reasoning_tokens` came back `null` on every
+llama.cpp run, because llama-server reports no
+`completion_tokens_details.reasoning_tokens`. The probe reported the `null`
+without saying why, so an operator could not distinguish "no reasoning" from
+"this engine does not count reasoning". The evidence line is now engine-agnostic
+and states which is the case.
+
 ## 11. Authority boundaries preserved
 
 Unchanged, and deliberately unreachable from this code: provider routing,
