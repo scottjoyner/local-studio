@@ -1902,9 +1902,13 @@ function prePush() {
     }
     excludedRef = defaultRef;
     try {
+      // Exclude dev by reachability alone (`git log --not dev`), which is how the
+      // consumer applies it. Requiring dev to be an ancestor of the branch meant a
+      // branch that was merely behind dev fell back to excluding main, and the range
+      // below then spanned every commit shared with main — so a first push re-validated
+      // long-merged history and failed on a commit type it could not change.
       let devRef = `${remote}/dev`;
       git(["rev-parse", "--verify", "--quiet", devRef]);
-      git(["merge-base", "--is-ancestor", devRef, localSha]);
       excludedRef = devRef;
     } catch {
     }
