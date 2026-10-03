@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { evaluateR9700HardwareIdentity, extractPciDevices } from "./r9700-hardware-identity.mjs";
 
 const argv = process.argv.slice(2);
 
@@ -34,6 +35,8 @@ if (has("--help")) {
       "  --engine-file <path>",
       "  --require-arch <gfx-arch>",
       "  --require-gpu-name <substring>",
+      "  --require-pci-device-id <vendor:device>",
+      "  --require-memory-mb <minimum-vram-mib>",
       "  --api-key-env <environment-variable>",
       "  --request-timeout-ms <milliseconds>",
       "  --benchmark-timeout-ms <milliseconds>",
@@ -341,6 +344,13 @@ const architectures = Array.from(
 ).sort();
 const requiredArch = value("--require-arch", "gfx1201").toLowerCase();
 const requiredGpuName = value("--require-gpu-name", "Radeon AI PRO R9700");
+const requiredPciDeviceId = value("--require-pci-device-id", "1002:7551");
+const requiredMemoryMb = Number(value("--require-memory-mb", "30000"));
+if (!Number.isInteger(requiredMemoryMb) || requiredMemoryMb < 1) {
+  throw new Error("--require-memory-mb must be an integer >= 1");
+}
+const lspci = command("lspci", ["-nn", "-D"]);
+const pciDevices = extractPciDevices(lspci.stdout);
 const sourceRevision = command("git", ["rev-parse", "HEAD"]);
 const sourceStatus = command("git", ["status", "--porcelain", "--untracked-files=no"]);
 const uname = command("uname", ["-a"]);
@@ -582,9 +592,13 @@ const manifest = {
   hardware: {
     requiredArch,
     requiredGpuName,
+    requiredPciDeviceId,
+    requiredMemoryMb,
     architectures,
     requiredArchPresent: architectures.includes(requiredArch),
+    pciDevices,
     rocminfo,
+    lspci,
     amdSmi,
     rocmSmi,
   },
@@ -614,25 +628,31 @@ const manifest = {
   liveBenchmark: liveBenchmarkEvidence,
   artifacts: artifactEvidence,
   summary: (() => {
-    const hardwareArchitectureAccepted = architectures.includes(requiredArch);
     const controllerGpus =
       controllerEvidence?.gpus?.body &&
       typeof controllerEvidence.gpus.body === "object" &&
       Array.isArray(controllerEvidence.gpus.body.gpus)
         ? controllerEvidence.gpus.body.gpus
         : [];
-    const matchingGpu =
-      typeof requiredGpuName === "string" && requiredGpuName.trim()
-        ? controllerGpus.find(
-            (gpu) =>
-              gpu &&
-              typeof gpu === "object" &&
-              typeof gpu.name === "string" &&
-              gpu.name.toLowerCase().includes(requiredGpuName.trim().toLowerCase()),
-          ) ?? null
-        : null;
-    const hardwareIdentityAccepted = Boolean(matchingGpu);
-    const hardwareAccepted = hardwareArchitectureAccepted && hardwareIdentityAccepted;
+    const hardwareIdentity = evaluateR9700HardwareIdentity({
+      architectures,
+      requiredArch,
+      requiredGpuName,
+      requiredPciDeviceId,
+      requiredMemoryMb,
+      controllerGpus,
+      pciDevices,
+    });
+    const {
+      hardwareAccepted,
+      hardwareArchitectureAccepted,
+      hardwareIdentityAccepted,
+      hardwareIdentityMethod,
+      matchingGpuName,
+      matchingPciDevice,
+      matchingMemoryGpu,
+      normalizedRequiredPciDeviceId,
+    } = hardwareIdentity;
     const controllerAccepted = controllerEvidence?.status?.ok ?? null;
     const compatibilityAccepted =
       controllerEvidence?.compatibility?.ok === true &&
@@ -709,8 +729,13 @@ const manifest = {
       hardwareAccepted,
       hardwareArchitectureAccepted,
       hardwareIdentityAccepted,
+      hardwareIdentityMethod,
       requiredGpuName,
-      matchingGpu,
+      requiredPciDeviceId: normalizedRequiredPciDeviceId,
+      requiredMemoryMb,
+      matchingGpu: matchingGpuName,
+      matchingPciDevice,
+      matchingMemoryGpu,
       controllerAccepted,
       compatibilityAccepted,
       endpointModelsAccepted,

@@ -46,6 +46,9 @@ jobs:
         run: |
           node --check scripts/capture-local-ai-evidence.mjs
           node --check scripts/capture-local-ai-evidence.test.mjs
+          node --check scripts/r9700-hardware-identity.mjs
+          node --check scripts/r9700-hardware-identity.test.mjs
+          node scripts/r9700-hardware-identity.test.mjs
           node --check scripts/export-opencode-session-evidence.mjs
           node --check scripts/export-opencode-session-evidence.test.mjs
           node --check scripts/render-r9700-bonsai-registry-candidate.mjs
