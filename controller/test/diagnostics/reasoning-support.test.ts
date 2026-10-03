@@ -48,25 +48,32 @@ test("SGLang and MLX report the budget as unsupported rather than faking it", ()
   }
 });
 
-test("a budget the runtime ignored is downgraded only when it was actually sent", () => {
+test("a budget is judged only on a measurement that actually exists", () => {
   const supported = resolveReasoningBudget({ engine: "vllm", requested: 256, maxOutputTokens: 512 });
   expect(
     observeReasoningBudget(supported, {
       sent: true,
       reasoningTokens: 900,
-      reasoningLength: 3_000,
     }).state,
   ).toBe("IGNORED_BY_ENGINE");
   expect(
-    observeReasoningBudget(supported, { sent: true, reasoningTokens: 120, reasoningLength: 400 })
+    observeReasoningBudget(supported, { sent: true, reasoningTokens: 256 })
       .state,
   ).toBe("SUPPORTED");
   expect(
-    observeReasoningBudget(supported, { sent: false, reasoningTokens: 900, reasoningLength: 3_000 })
+    observeReasoningBudget(supported, { sent: true, reasoningTokens: 120 })
       .state,
   ).toBe("SUPPORTED");
   expect(
-    observeReasoningBudget(supported, { sent: true, reasoningTokens: null, reasoningLength: 3_000 })
+    observeReasoningBudget(supported, { sent: true, reasoningTokens: null })
+      .state,
+  ).toBe("UNOBSERVED");
+});
+
+test("a budget that was never sent is not judged either way", () => {
+  const supported = resolveReasoningBudget({ engine: "vllm", requested: 256, maxOutputTokens: 512 });
+  expect(
+    observeReasoningBudget(supported, { sent: false, reasoningTokens: 900 })
       .state,
   ).toBe("SUPPORTED");
 });
@@ -80,8 +87,7 @@ test("an unobservable budget is never reported as honored or ignored", () => {
   expect(
     observeReasoningBudget(unsupported, {
       sent: true,
-      reasoningTokens: 900,
-      reasoningLength: 3_000,
+      reasoningTokens: 900
     }).state,
   ).toBe("SUPPORTED");
 });
@@ -138,14 +144,14 @@ test("separation is supported only where the engine actually splits reasoning ou
 
 test("a runtime that answers without separating reasoning is IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("llamacpp");
-  const observed = observeReasoningSeparation(separation, { separated: false });
+  const observed = observeReasoningSeparation(separation, { kind: "inline" });
   expect(observed.state).toBe("IGNORED_BY_ENGINE");
   expect(observed.engine_flag).toBe("--reasoning-format");
 });
 
 test("an unsupported directive is never upgraded to IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("mlx");
-  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe("UNSUPPORTED");
+  expect(observeReasoningSeparation(separation, { kind: "inline" }).state).toBe("UNSUPPORTED");
 });
 
 test("every catalog profile is bounded, self-consistent, and node-agnostic", () => {
@@ -310,8 +316,8 @@ test("a profile without a stop sequence sends no stop field", () => {
 
 test("separation is judged even when the profile asked for no reasoning budget", () => {
   const separation = reasoningSeparationFor("llamacpp");
-  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe(
+  expect(observeReasoningSeparation(separation, { kind: "inline" }).state).toBe(
     "IGNORED_BY_ENGINE",
   );
-  expect(observeReasoningSeparation(separation, { separated: true }).state).toBe("SUPPORTED");
+  expect(observeReasoningSeparation(separation, { kind: "separated" }).state).toBe("SUPPORTED");
 });

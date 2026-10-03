@@ -107,13 +107,18 @@ export const runQualificationProbe = (
       error_detail: attempt.error_detail,
     });
 
-    const resolvedSeparation = observeReasoningSeparation(separation, {
-      separated: anatomy !== null && !anatomy.reasoning_merged_into_content,
-    });
+    const observed = anatomy !== null && attempt.ok && anatomy.shape === "openai_chat";
+    const resolvedSeparation = observeReasoningSeparation(
+      separation,
+      !observed
+        ? { kind: "unobserved" }
+        : anatomy.reasoning_merged_into_content
+          ? { kind: "inline" }
+          : { kind: "separated" },
+    );
     const resolvedBudget = observeReasoningBudget(budget, {
       sent: reasoning_budget_sent,
-      reasoningTokens: anatomy?.reasoning_tokens ?? null,
-      reasoningLength: anatomy?.reasoning.length ?? 0,
+      reasoningTokens: observed ? (anatomy.reasoning_tokens ?? null) : null,
     });
     const consumed = reasoningConsumedBudget(anatomy);
 

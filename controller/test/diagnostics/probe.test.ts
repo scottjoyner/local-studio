@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
-import type { DiagnosticProfile, DiagnosticReport } from "@local-studio/contracts/inference-diagnostics";
+import type {
+  DiagnosticClassification,
+  DiagnosticProfile,
+  DiagnosticReport,
+} from "@local-studio/contracts/inference-diagnostics";
 import { runQualificationProbe } from "../../src/modules/diagnostics/probe";
 import { diagnosticProfile } from "../../src/modules/diagnostics/diagnostic-profiles";
 import { DiagnosticProfileError } from "../../src/modules/diagnostics/runtime-identity";
@@ -63,7 +67,11 @@ const stallStream = (prefix: readonly Uint8Array[]): Response =>
     { headers: { "content-type": "text/event-stream" } },
   );
 
-const probe = async (handler: Handler, profile: DiagnosticProfile): Promise<DiagnosticReport> => {
+const probe = async (
+  handler: Handler,
+  profile: DiagnosticProfile,
+  engine = "llamacpp",
+): Promise<DiagnosticReport> => {
   const server = Bun.serve({ port: 0, fetch: handler });
   try {
     return await Effect.runPromise(
@@ -71,8 +79,8 @@ const probe = async (handler: Handler, profile: DiagnosticProfile): Promise<Diag
         base_url: `http://127.0.0.1:${server.port}`,
         model: MODEL_ID,
         profile,
-        engine: "llamacpp",
-        engine_image: "ghcr.io/ggml-org/llama.cpp:server-rocm",
+        engine,
+        engine_image: engine === "llamacpp" ? "ghcr.io/ggml-org/llama.cpp:server-rocm" : null,
         api_key: null,
         probed_at: PROBED_AT,
       }),
@@ -551,4 +559,164 @@ test("the echoed request never carries credentials", async () => {
   } finally {
     server.stop(true);
   }
+});
+
+const NO_ANSWER_SCENARIOS: readonly {
+  readonly label: string;
+  readonly classification: DiagnosticClassification;
+  readonly handler: Handler;
+  readonly profile?: Partial<DiagnosticProfile>;
+}[] = [
+  {
+    label: "first-token stall",
+    classification: "FIRST_TOKEN_TIMEOUT",
+    handler: () => stallStream([]),
+  },
+  {
+    label: "generation overrun",
+    classification: "GENERATION_TIMEOUT",
+    handler: () => stallStream([deltaFrame("partial")]),
+  },
+  {
+    label: "unserved model",
+    classification: "MODEL_NOT_LOADED",
+    handler: () => Response.json({ error: { message: "not found" } }, { status: 404 }),
+  },
+  {
+    label: "context refusal",
+    classification: "CONTEXT_REJECTED",
+    handler: () =>
+      Response.json(
+        { error: { message: "maximum context length is 32768 tokens" } },
+        { status: 400 },
+      ),
+  },
+  {
+    label: "unparseable 200",
+    classification: "INVALID_RESPONSE_SHAPE",
+    handler: () => Response.json({ status: "ok" }),
+  },
+];
+
+test("a run that produced no answer never blames the separation flag", async () => {
+  for (const scenario of NO_ANSWER_SCENARIOS) {
+    const report = await probe(
+      withModelCatalog(scenario.handler),
+      fastProfile(scenario.profile ?? {}),
+    );
+    expect(report.result.classification).toBe(scenario.classification);
+    expect(report.reasoning.separation.state).not.toBe("IGNORED_BY_ENGINE");
+    expect(report.reasoning.separation.state).toBe("UNOBSERVED");
+    expect(report.reasoning.separation.detail).not.toContain("answered 200");
+  }
+});
+
+test("a sent budget that could not be measured reports UNOBSERVED, not honored", async () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  for (const scenario of NO_ANSWER_SCENARIOS) {
+    const report = await probe(
+      withModelCatalog(scenario.handler),
+      { ...profile, timeout_ms: 1_200, first_token_timeout_ms: 400 },
+      "vllm",
+    );
+    expect(report.result.classification).toBe(scenario.classification);
+    expect(report.request.body["thinking_token_budget"]).toBe(256);
+    expect(report.reasoning.budget.state).not.toBe("IGNORED_BY_ENGINE");
+    expect(report.reasoning.budget.state).toBe("UNOBSERVED");
+  }
+});
+
+test("a sent budget with no parser behind it is UNOBSERVED rather than honored", async () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([deltaFrame("0.05"), finishFrame("stop")]),
+    ),
+    profile,
+    "vllm",
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.reasoning.budget.state).toBe("UNOBSERVED");
+  expect(
+    report.evidence.some((line) => line.includes("omits completion_tokens_details")),
+  ).toBe(true);
+});
+
+test("a sent budget measured within the cap stays SUPPORTED", async () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning: "the bat is 1.05" }, finish_reason: null }],
+        }),
+        deltaFrame("0.05"),
+        finishFrame("stop"),
+        usageFrame(120, 100),
+      ]),
+    ),
+    profile,
+    "vllm",
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.reasoning.budget.state).toBe("SUPPORTED");
+  expect(report.anatomy?.reasoning).toContain("the bat is 1.05");
+});
+
+test("a sent budget measured over the cap reports IGNORED_BY_ENGINE", async () => {
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning: "long chain" }, finish_reason: null }],
+        }),
+        finishFrame("length"),
+        usageFrame(900, 900),
+      ]),
+    ),
+    profile,
+    "vllm",
+  );
+  expect(report.reasoning.budget.state).toBe("IGNORED_BY_ENGINE");
+  expect(report.reasoning.budget.detail).toContain("did not take effect");
+});
+
+test("an engine with no separation flag keeps its static state even with no answer", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ error: { message: "not found" } }, { status: 404 }),
+  });
+  const profile = diagnosticProfile("protocol_canary");
+  if (!profile) throw new Error("protocol_canary profile is missing");
+  try {
+    const report = await Effect.runPromise(
+      runQualificationProbe({
+        base_url: `http://127.0.0.1:${server.port}`,
+        model: MODEL_ID,
+        profile,
+        engine: "mlx",
+        engine_image: null,
+        api_key: null,
+        probed_at: PROBED_AT,
+      }),
+    );
+    expect(report.result.classification).toBe("MODEL_NOT_LOADED");
+    expect(report.reasoning.separation.state).toBe("UNSUPPORTED");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a llama.cpp launch-time budget is not called unobserved when a request fails", async () => {
+  const report = await probe(
+    withModelCatalog(() => Response.json({ error: { message: "not found" } }, { status: 404 })),
+    fastProfile(),
+  );
+  expect(report.reasoning.budget.mechanism).toBe("server_flag");
+  expect(report.reasoning.budget.state).toBe("SUPPORTED");
 });

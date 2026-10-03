@@ -31,6 +31,7 @@ export const REASONING_BUDGET_STATES = [
   "UNSUPPORTED",
   "IGNORED_BY_ENGINE",
   "INVALID_CONFIGURATION",
+  "UNOBSERVED",
 ] as const;
 
 export type ReasoningBudgetState = (typeof REASONING_BUDGET_STATES)[number];

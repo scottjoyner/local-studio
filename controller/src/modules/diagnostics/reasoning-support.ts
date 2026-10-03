@@ -216,22 +216,35 @@ export const resolveReasoningBudget = ({
 };
 
 /**
+ * A tri-state, because a single boolean collapses two opposite situations:
+ * reasoning arrived inline, and nothing arrived at all. Making it a union means
+ * "reasoning was separated but no response was seen" cannot be expressed, which
+ * is the mistake that made a transport failure report IGNORED_BY_ENGINE.
+ */
+export type SeparationObservation =
+  | { readonly kind: "separated" }
+  | { readonly kind: "inline" }
+  | { readonly kind: "unobserved" };
+
+/**
  * Downgrades a claimed per-request budget when the response shows reasoning
- * running past the budget that was sent. Only ever fires on a sent budget with
- * an observed token count, so an unobservable budget is never reported as
- * honored or ignored.
+ * running past the budget that was sent. A sent budget with no token count to
+ * check is UNOBSERVED rather than honored, because "could not measure" and
+ * "measured within budget" are different facts.
  */
 export const observeReasoningBudget = (
   resolution: ReasoningBudgetResolution,
-  observation: {
-    sent: boolean;
-    reasoningTokens: number | null;
-    reasoningLength: number;
-  },
+  observation: { readonly sent: boolean; readonly reasoningTokens: number | null },
 ): ReasoningBudgetResolution => {
-  if (!observation.sent || resolution.state !== "SUPPORTED") return resolution;
-  if (!resolution.applies_to_request) return resolution;
-  if (observation.reasoningTokens === null || resolution.requested === null) return resolution;
+  if (!observation.sent || !resolution.applies_to_request) return resolution;
+  if (resolution.state !== "SUPPORTED" || resolution.requested === null) return resolution;
+  if (observation.reasoningTokens === null) {
+    return {
+      ...resolution,
+      state: "UNOBSERVED",
+      detail: `${resolution.request_field} was sent with ${resolution.requested} but the runtime reported no reasoning token count, so the budget could not be verified.`,
+    };
+  }
   if (observation.reasoningTokens <= resolution.requested) return resolution;
   return {
     ...resolution,
@@ -241,20 +254,29 @@ export const observeReasoningBudget = (
 };
 
 /**
- * Downgrades a claimed separation directive when the response shows the
- * reasoning arriving inline instead. Deliberately independent of whether the
- * profile asked for a reasoning budget: the directive is a server-side flag,
- * not something the request carries, so inline reasoning on a plain grounding
- * profile is exactly the failure this has to catch.
+ * Downgrades a claimed separation directive when the response shows reasoning
+ * arriving inline instead, and marks it UNOBSERVED when there was no response to
+ * judge. Deliberately independent of whether the profile asked for a reasoning
+ * budget: the directive is a server-side flag, not something the request
+ * carries, so inline reasoning on a plain grounding profile is exactly the
+ * failure this has to catch.
  */
 export const observeReasoningSeparation = (
   resolution: ReasoningSeparationResolution,
-  observation: { separated: boolean },
+  observation: SeparationObservation,
 ): ReasoningSeparationResolution => {
-  if (observation.separated || resolution.state !== "SUPPORTED") return resolution;
+  if (resolution.state !== "SUPPORTED") return resolution;
+  if (observation.kind === "unobserved") {
+    return {
+      ...resolution,
+      state: "UNOBSERVED",
+      detail: `No usable response arrived, so whether ${resolution.engine_flag ?? "the configured directive"} is honoured could not be observed.`,
+    };
+  }
+  if (observation.kind === "separated") return resolution;
   return {
     ...resolution,
     state: "IGNORED_BY_ENGINE",
-    detail: `The runtime answered 200 but reasoning arrived inline instead of in its own field, so ${resolution.engine_flag ?? "the configured directive"} had no effect on this model or template.`,
+    detail: `Reasoning arrived inline instead of in its own field, so ${resolution.engine_flag ?? "the configured directive"} had no effect on this model or template.`,
   };
 };
