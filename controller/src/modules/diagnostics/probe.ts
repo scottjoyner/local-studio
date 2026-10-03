@@ -128,6 +128,12 @@ export const runQualificationProbe = (
       runtime: { ...runtime, engine_image: input.engine_image },
       model,
       request_profile: input.profile,
+      request: {
+        bounded_output_field: bounded_output.field,
+        bounded_output_reason: bounded_output.reason,
+        streamed: Boolean(body["stream"]),
+        body,
+      },
       http: {
         status: attempt.status,
         ok: attempt.ok,

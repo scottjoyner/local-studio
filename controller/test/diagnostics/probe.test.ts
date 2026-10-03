@@ -485,3 +485,70 @@ test("a malformed profile fails typed rather than as an unhandled defect", async
   expect(captured._tag).toBe("DiagnosticProfileError");
   expect(captured.detail).toContain("first token");
 });
+
+test("the report echoes the exact request that was sent", async () => {
+  const report = await probe(
+    withModelCatalog(() => openStream([deltaFrame("OK"), finishFrame("stop")])),
+    fastProfile(),
+  );
+  expect(report.request.bounded_output_field).toBe("max_tokens");
+  expect(report.request.streamed).toBe(true);
+  expect(report.request.body["model"]).toBe(MODEL_ID);
+  expect(report.request.body["max_tokens"]).toBe(report.request_profile.max_output_tokens);
+  expect(report.request.body["max_completion_tokens"]).toBeUndefined();
+  expect(report.request.body["stream"]).toBe(true);
+  expect(report.request.body["stream_options"]).toEqual({ include_usage: true });
+  expect(report.request.body["temperature"]).toBe(0);
+});
+
+test("a rejected request can be diagnosed from the echoed body alone", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      Response.json(
+        { error: { message: "unrecognized request field 'max_tokens'" } },
+        { status: 400 },
+      ),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.classification).toBe("INVALID_RESPONSE_SHAPE");
+  expect(report.request.bounded_output_field).toBe("max_tokens");
+  expect(report.request.bounded_output_reason).toContain("max_tokens");
+  expect(report.request.body["max_tokens"]).toBeDefined();
+  expect(
+    report.evidence.some((line) => line.includes("unrecognized request field")),
+  ).toBe(true);
+});
+
+test("the echoed request never carries credentials", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request: Request) => {
+      if (new URL(request.url).pathname === "/v1/models") {
+        return Response.json({ object: "list", data: [{ id: MODEL_ID, max_model_len: 32_768 }] });
+      }
+      return openStream([deltaFrame("OK"), finishFrame("stop")]);
+    },
+  });
+  const profile = diagnosticProfile("protocol_canary");
+  if (!profile) throw new Error("protocol_canary profile is missing");
+  try {
+    const report = await Effect.runPromise(
+      runQualificationProbe({
+        base_url: `http://127.0.0.1:${server.port}`,
+        model: MODEL_ID,
+        profile,
+        engine: "vllm",
+        engine_image: null,
+        api_key: "super-secret-value",
+        probed_at: PROBED_AT,
+      }),
+    );
+    expect(report.request.bounded_output_field).toBe("max_completion_tokens");
+    expect(JSON.stringify(report)).not.toContain("super-secret-value");
+    expect(report.request.body["api_key"]).toBeUndefined();
+    expect(report.request.body["authorization"]).toBeUndefined();
+  } finally {
+    server.stop(true);
+  }
+});

@@ -118,12 +118,21 @@ export interface DiagnosticTiming {
   readonly timed_tokens: number | null;
 }
 
+export interface DiagnosticReportRequest {
+  readonly bounded_output_field: "max_completion_tokens" | "max_tokens";
+  readonly bounded_output_reason: string;
+  readonly streamed: boolean;
+  readonly body: Readonly<Record<string, unknown>>;
+}
+
 export interface DiagnosticReport {
   readonly schema_version: "1";
   readonly probed_at: string;
   readonly runtime: RuntimeIdentity;
   readonly model: ModelIdentity;
   readonly request_profile: DiagnosticProfile;
+  /** Exactly what was sent, so a rejected request can be diagnosed from the report alone. */
+  readonly request: DiagnosticReportRequest;
   readonly http: ProbeHttpResult;
   readonly timing: DiagnosticTiming;
   readonly result: {

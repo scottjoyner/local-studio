@@ -245,6 +245,20 @@ register a provider, or touch the instance store.
     "matched": true
   },
   "request_profile": { "name": "short_reasoning", "max_output_tokens": 256, "reasoning_budget_tokens": 256, "...": "..." },
+  "request": {
+    "bounded_output_field": "max_tokens",
+    "bounded_output_reason": "llamacpp reads the classic max_tokens bound.",
+    "streamed": true,
+    "body": {
+      "model": "Ternary-Bonsai-2-27B-PQ2_0",
+      "messages": [{ "role": "user", "content": "..." }],
+      "max_tokens": 256,
+      "temperature": 0,
+      "top_p": 1,
+      "stream": true,
+      "stream_options": { "include_usage": true }
+    }
+  },
   "http": { "status": 200, "ok": true, "error": null, "abort_stage": null },
   "timing": { "ttft_ms": 9, "total_ms": 9, "generation_ms": 0, "tokens_per_second": null, "timed_tokens": 256 },
   "result": {
@@ -320,6 +334,12 @@ The export shape is `DiagnosticReport` from
   "evidence": ["..."]
 }
 ```
+
+`request` echoes the exact body that was sent, including which bounded-output
+field the engine was given. Without it a rejected request cannot be diagnosed
+from the report alone — a runtime that 400s on `max_completion_tokens` looks
+identical to one that 400s on a bad prompt. The body carries no credentials:
+the API key travels in a header and is never part of the echoed payload.
 
 `schema_version` is `"1"`. Consumers should treat unknown classifications and
 unknown fields as forward-compatible additions.
