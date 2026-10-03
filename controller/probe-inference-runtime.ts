@@ -17,7 +17,6 @@
  * classification, 2 for a usage error.
  */
 
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Effect, Exit } from "effect";
 import { runQualificationProbe } from "./src/modules/diagnostics/probe";
@@ -25,11 +24,13 @@ import {
   diagnosticProfile,
   isDiagnosticProfileName,
 } from "./src/modules/diagnostics/diagnostic-profiles";
-import { recipeEvidence } from "./src/modules/diagnostics/evidence";
+import {
+  RecipeRegistryError,
+  readRecipeFromRegistry,
+  recipeEvidence,
+} from "./src/modules/diagnostics/evidence";
 import { assertProfileBounds } from "./src/modules/diagnostics/runtime-identity";
-import { parseRecipe } from "./src/modules/models/recipes/recipe-serializer";
 import type { DiagnosticReport, RecipeQualificationEvidence } from "./contracts/inference-diagnostics";
-import type { Recipe } from "./src/modules/models/types";
 
 const USAGE = [
   "Usage: bun --cwd controller probe-inference-runtime.ts --base-url <url> --model <id> --profile <name> [options]",
@@ -109,37 +110,6 @@ const parseOptions = (args: readonly string[]): Options => {
   return options;
 };
 
-const loadRecipe = (dataDirectory: string, recipeId: string): Recipe => {
-  const path = resolve(dataDirectory, "model-index.json");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch (error) {
-    throw new UsageError(
-      `cannot read the recipe registry at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const entries =
-    typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { entries?: unknown }).entries)
-      ? ((parsed as { entries: unknown[] }).entries)
-      : [];
-  for (const entry of entries) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const record = entry as { id?: unknown; name?: unknown; serve?: unknown };
-    if (record.id !== recipeId) continue;
-    const serve =
-      typeof record.serve === "object" && record.serve !== null
-        ? (record.serve as Record<string, unknown>)
-        : {};
-    return parseRecipe({
-      id: recipeId,
-      name: typeof record.name === "string" ? record.name : recipeId,
-      ...serve,
-    });
-  }
-  throw new UsageError(`recipe ${recipeId} is not in ${path}`);
-};
-
 const profileCatalog = (): unknown =>
   ["protocol_canary", "exact_grounding", "short_reasoning", "bounded_code"].map((name) => {
     const profile = diagnosticProfile(name);
@@ -199,7 +169,7 @@ const main = async (args: readonly string[]): Promise<number> => {
   const report: DiagnosticReport = outcome.value;
   const payload: Record<string, unknown> = { report };
   if (options.recipe) {
-    const recipe = loadRecipe(options.dataDirectory, options.recipe);
+    const recipe = readRecipeFromRegistry(options.dataDirectory, options.recipe);
     const evidence: RecipeQualificationEvidence = recipeEvidence({ recipe, profile, report });
     payload["evidence"] = evidence;
   }
@@ -210,7 +180,7 @@ const main = async (args: readonly string[]): Promise<number> => {
 try {
   process.exitCode = await main(process.argv.slice(2));
 } catch (error) {
-  if (error instanceof UsageError) {
+  if (error instanceof UsageError || error instanceof RecipeRegistryError) {
     console.error(error.message);
     console.error("");
     console.error(USAGE);

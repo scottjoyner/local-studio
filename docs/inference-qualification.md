@@ -78,6 +78,15 @@ States:
 is reported, not *how much* is generated. That is a separation control, not a
 budget control, and the table keeps the two dimensions apart.
 
+`INVALID_CONFIGURATION` covers a value that is unusable on its own — negative or
+non-integer — and, **only when an output cap is actually in play**, a budget
+larger than that cap. The cap is a separate scope: a probe compares against its
+own profile's `max_output_tokens`, while recipe evidence passes no cap at all,
+because a recipe's declared budget is a property of the recipe and not of
+whichever probe happens to read it. `compared_against_output_cap` records which
+scope applied (`null` when none did). Getting this wrong makes a perfectly good
+recipe look misconfigured merely because a probe ran with a tighter output cap.
+
 `llama.cpp` behavior already in the tree, verified while building this:
 `compute/bridge.ts` pushes `--reasoning-budget` only for `llamacpp`, only when
 the value is a non-negative integer, and only when `extra_args` has not already
@@ -97,6 +106,26 @@ Inline `<think>` residue is detected with the proxy's own extractor, so the
 probe and the serving path agree on what counts as reasoning. This matters: a
 runtime started with `--reasoning-format auto` returns thoughts inside
 `content`, which looks like a 900-token answer and is not one.
+
+### What the probe cannot see
+
+Separation detection only works on reasoning that is actually *marked* — a
+dedicated `reasoning_content` field, or an explicit `<think>` block. A runtime
+that emits unmarked monologue as plain content is indistinguishable from a long
+answer by content alone, so the probe cannot classify it as reasoning. What it
+does instead:
+
+- `reasoning_merged_into_content` is `true` whenever an explicit think block was
+  found, and `inlined_reasoning_length` sizes it.
+- `reasoning_separation` is downgraded to `IGNORED_BY_ENGINE` when a reasoning
+  profile was used and inline reasoning was found anyway — which is the
+  `--reasoning-format auto` failure.
+- `grounded_answer_match` is `false` for a profile with a known expected answer,
+  so an unmarked monologue still fails a determinism check rather than passing as
+  a correct answer.
+
+Treat `grounded_answer_match: false` on `exact_grounding` as the signal for
+this class, not `classification`.
 
 OpenAI compatibility is untouched. The probe is a separate read-only path and
 rewrites nothing that callers receive.
@@ -299,6 +328,13 @@ reads two HTTP endpoints and writes nothing.
   body shape, grounding as evidence only.
 - `probe.test.ts` — the same classifications end to end against a real
   stalling server, so the first-token and generation deadlines are exercised
-  through actual fetch and stream cancellation.
+  through actual fetch and stream cancellation. Also covers a runtime that
+  answers a streaming request with one JSON body, a catalog with no `data`
+  array, inline monologue on a reasoning profile, properly separated reasoning,
+  and tool calls streamed across frames.
+- `evidence.test.ts` — reads recipes out of a real registry file, including the
+  missing-file, unknown-id, empty-entries, and invalid-recipe paths; asserts the
+  evidence shape carries no hardware placement; and pins that a recipe budget is
+  judged against the recipe, not against the probe profile.
 
 Run with `bun --cwd controller run test`.

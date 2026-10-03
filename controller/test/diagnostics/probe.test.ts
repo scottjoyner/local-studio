@@ -240,3 +240,114 @@ test("the probe reads llama.cpp identity and never claims a per-request budget",
   expect(report.reasoning.budget.applies_to_request).toBe(false);
   expect(report.schema_version).toBe("1");
 });
+test("a runtime that answers a streaming request with one JSON body is still classified", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      Response.json({
+        object: "chat.completion",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 12, completion_tokens: 2 },
+      }),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.result.content_length).toBe(2);
+  expect(report.timing.ttft_ms).toBeNull();
+  expect(report.timing.total_ms).toBeGreaterThanOrEqual(0);
+  expect(
+    report.evidence.some((line) => line.includes("single JSON body")),
+  ).toBe(true);
+});
+
+test("a catalog without a data array leaves identity unknown but does not fail the probe", async () => {
+  const report = await probe((request) => {
+    if (new URL(request.url).pathname === "/v1/models") {
+      return Response.json({ object: "list" });
+    }
+    return openStream([deltaFrame("OK"), finishFrame("stop")]);
+  }, fastProfile());
+  expect(report.runtime.reachable).toBe(true);
+  expect(report.runtime.server_model_ids).toEqual([]);
+  expect(report.model.matched).toBe(false);
+  expect(report.result.classification).toBe("OUTPUT_OK");
+});
+
+test("inline monologue on a reasoning profile is reported as IGNORED_BY_ENGINE", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        deltaFrame("<think>let me work through this at considerable length</think>"),
+        finishFrame("stop"),
+      ]),
+    ),
+    { ...fastProfile({ max_output_tokens: 256 }), reasoning_budget_tokens: 256 },
+  );
+  expect(report.reasoning.separation.state).toBe("IGNORED_BY_ENGINE");
+  expect(report.reasoning.separation.engine_flag).toBe("--reasoning-format");
+  expect(report.result.inlined_reasoning_length).toBeGreaterThan(0);
+  expect(report.anatomy?.reasoning_merged_into_content).toBe(true);
+  expect(report.anatomy?.content.trim()).toBe("");
+  expect(report.result.classification).toBe("REASONING_ONLY");
+});
+
+test("properly separated reasoning keeps the separation directive SUPPORTED", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [
+            { index: 0, delta: { reasoning_content: "the bat is 1.05" }, finish_reason: null },
+          ],
+        }),
+        deltaFrame("0.05"),
+        finishFrame("stop"),
+        usageFrame(40, 30),
+      ]),
+    ),
+    { ...fastProfile({ max_output_tokens: 256 }), reasoning_budget_tokens: 256 },
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.result.reasoning_length).toBeGreaterThan(0);
+  expect(report.anatomy?.content).toBe("0.05");
+  expect(report.reasoning.separation.state).toBe("SUPPORTED");
+});
+
+test("tool calls streamed across frames are counted without becoming content", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "add" } }] },
+              finish_reason: null,
+            },
+          ],
+        }),
+        sseFrame({
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: [{ index: 1, id: "call_2", function: { name: "sub" } }] },
+              finish_reason: null,
+            },
+          ],
+        }),
+        finishFrame("tool_calls"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.anatomy?.tool_call_count).toBe(2);
+  expect(report.anatomy?.finish_reason).toBe("tool_calls");
+  expect(report.result.content_length).toBe(0);
+  expect(report.result.classification).toBe("EMPTY_FINAL_CONTENT");
+});
