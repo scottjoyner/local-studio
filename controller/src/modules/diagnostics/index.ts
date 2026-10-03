@@ -41,8 +41,9 @@ export {
   resolveReasoningBudget,
 } from "./reasoning-support";
 export {
-  assertProfileBounds,
+  DiagnosticProfileError,
   catalogFromPayload,
+  profileBoundsProblem,
   emptyCatalog,
   modelIdentityFrom,
   runtimeIdentityFrom,

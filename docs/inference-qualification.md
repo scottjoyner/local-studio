@@ -47,9 +47,16 @@ Every profile pins input ceiling, output cap, temperature, `top_p`, reasoning
 budget, total timeout, first-token timeout, streaming, and stop behavior. None
 encodes a node name, hostname, or hardware placement.
 
-`assertProfileBounds` rejects a malformed profile (non-positive caps, a
+`profileBoundsProblem` describes why a profile is unusable (non-positive caps, a
 reasoning budget larger than the output cap, a first-token deadline that is not
-inside the total deadline) before any request is sent.
+inside the total deadline) and returns `null` when the profile is sound. It is
+pure and returns a string, so the probe turns it into a typed
+`DiagnosticProfileError` on the error channel rather than throwing across an
+Effect boundary — a library caller can `Effect.catchTag("DiagnosticProfileError")`
+it. No request is sent for a malformed profile.
+
+The catalog is frozen at module load, so a caller that mutates a profile it was
+handed cannot change the profile the next probe uses.
 
 ## 3. Reasoning-budget handling
 
@@ -117,9 +124,11 @@ does instead:
 
 - `reasoning_merged_into_content` is `true` whenever an explicit think block was
   found, and `inlined_reasoning_length` sizes it.
-- `reasoning_separation` is downgraded to `IGNORED_BY_ENGINE` when a reasoning
-  profile was used and inline reasoning was found anyway — which is the
-  `--reasoning-format auto` failure.
+- `reasoning_separation` is downgraded to `IGNORED_BY_ENGINE` whenever inline
+  reasoning was found, on **any** profile — the directive is a server-side
+  flag, not something the request carries, so gating this on whether the profile
+  asked for a reasoning budget would hide precisely the case that matters: a
+  plain `exact_grounding` request answered with 900 tokens of monologue.
 - `grounded_answer_match` is `false` for a profile with a known expected answer,
   so an unmarked monologue still fails a determinism check rather than passing as
   a correct answer.
@@ -303,6 +312,12 @@ The export shape is `DiagnosticReport` from
 
 `schema_version` is `"1"`. Consumers should treat unknown classifications and
 unknown fields as forward-compatible additions.
+
+`runQualificationProbe` fails with `DiagnosticProfileError` only for a malformed
+profile; every other condition — including a runtime that is down, that refuses
+the prompt, or that produces unusable output — is a **successful** Effect
+carrying a classification. Consumers should branch on
+`report.result.classification`, not on the Effect's success.
 
 ## 10. Authority boundaries preserved
 

@@ -1,8 +1,14 @@
+import { Schema } from "effect";
 import type {
   DiagnosticProfile,
   ModelIdentity,
   RuntimeIdentity,
 } from "@local-studio/contracts/inference-diagnostics";
+
+export class DiagnosticProfileError extends Schema.TaggedErrorClass<DiagnosticProfileError>()(
+  "DiagnosticProfileError",
+  { profile: Schema.String, detail: Schema.String },
+) {}
 
 type Rec = Record<string, unknown>;
 
@@ -57,27 +63,27 @@ export const modelIdentityFrom = (
   };
 };
 
-export const assertProfileBounds = (profile: DiagnosticProfile): void => {
+/**
+ * Describes why a profile is unusable, or null when it is sound. Kept pure and
+ * string-returning so the caller decides whether that becomes a typed failure
+ * rather than throwing across an Effect boundary.
+ */
+export const profileBoundsProblem = (profile: DiagnosticProfile): string | null => {
   if (profile.max_output_tokens <= 0) {
-    throw new Error(`profile ${profile.name} has a non-positive max_output_tokens`);
+    return `profile ${profile.name} has a non-positive max_output_tokens`;
   }
   if (profile.max_input_tokens <= 0) {
-    throw new Error(`profile ${profile.name} has a non-positive max_input_tokens`);
+    return `profile ${profile.name} has a non-positive max_input_tokens`;
   }
   const budget = profile.reasoning_budget_tokens;
   if (budget !== null && (!Number.isInteger(budget) || budget < 0)) {
-    throw new Error(
-      `profile ${profile.name} has reasoning_budget_tokens ${budget}, which is not a non-negative integer`,
-    );
+    return `profile ${profile.name} has reasoning_budget_tokens ${budget}, which is not a non-negative integer`;
   }
   if (budget !== null && budget > profile.max_output_tokens) {
-    throw new Error(
-      `profile ${profile.name} budgets ${budget} reasoning tokens inside a ${profile.max_output_tokens} token output, leaving no room for a final answer`,
-    );
+    return `profile ${profile.name} budgets ${budget} reasoning tokens inside a ${profile.max_output_tokens} token output, leaving no room for a final answer`;
   }
   if (profile.first_token_timeout_ms >= profile.timeout_ms) {
-    throw new Error(
-      `profile ${profile.name} waits ${profile.first_token_timeout_ms}ms for the first token inside a ${profile.timeout_ms}ms budget`,
-    );
+    return `profile ${profile.name} waits ${profile.first_token_timeout_ms}ms for the first token inside a ${profile.timeout_ms}ms budget`;
   }
+  return null;
 };

@@ -72,11 +72,28 @@ const profiles: Readonly<Record<DiagnosticProfileName, DiagnosticProfile>> = {
   },
 };
 
-export const diagnosticProfile = (name: string): DiagnosticProfile | null =>
-  Object.hasOwn(profiles, name) ? profiles[name as DiagnosticProfileName] : null;
+/**
+ * The catalog is handed to callers who build request bodies from it, so it is
+ * frozen rather than merely typed `readonly`: a probe that mutated a profile in
+ * place would silently change every later probe.
+ */
+const frozenProfiles: Readonly<Record<DiagnosticProfileName, DiagnosticProfile>> =
+  Object.freeze(
+    Object.fromEntries(
+      (Object.entries(profiles) as [DiagnosticProfileName, DiagnosticProfile][]).map(
+        ([name, profile]) => [name, Object.freeze({ ...profile, stop: Object.freeze([...profile.stop]) })],
+      ),
+    ) as Record<DiagnosticProfileName, DiagnosticProfile>,
+  );
 
-export const allDiagnosticProfiles = (): readonly DiagnosticProfile[] =>
-  Object.values(profiles);
+export const diagnosticProfile = (name: string): DiagnosticProfile | null =>
+  Object.hasOwn(frozenProfiles, name) ? frozenProfiles[name as DiagnosticProfileName] : null;
+
+const frozenList: readonly DiagnosticProfile[] = Object.freeze(
+  Object.values(frozenProfiles),
+);
+
+export const allDiagnosticProfiles = (): readonly DiagnosticProfile[] => frozenList;
 
 export const isDiagnosticProfileName = (name: string): name is DiagnosticProfileName =>
   Object.hasOwn(profiles, name);

@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import type { DiagnosticProfile, DiagnosticReport } from "@local-studio/contracts/inference-diagnostics";
 import { runQualificationProbe } from "../../src/modules/diagnostics/probe";
 import { diagnosticProfile } from "../../src/modules/diagnostics/diagnostic-profiles";
+import { DiagnosticProfileError } from "../../src/modules/diagnostics/runtime-identity";
 
 const PROBED_AT = "2026-10-02T00:00:00.000Z";
 const MODEL_ID = "Ternary-Bonsai-2-27B-PQ2_0";
@@ -350,4 +351,61 @@ test("tool calls streamed across frames are counted without becoming content", a
   expect(report.anatomy?.finish_reason).toBe("tool_calls");
   expect(report.result.content_length).toBe(0);
   expect(report.result.classification).toBe("EMPTY_FINAL_CONTENT");
+});
+
+test("inline monologue on a grounding profile with no budget is still IGNORED_BY_ENGINE", async () => {
+  const profile = diagnosticProfile("exact_grounding");
+  if (!profile) throw new Error("exact_grounding profile is missing");
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        deltaFrame("<think>weighing the request against every alternative reading</think>"),
+        finishFrame("stop"),
+      ]),
+    ),
+    profile,
+  );
+  expect(profile.reasoning_budget_tokens).toBeNull();
+  expect(report.reasoning.separation.state).toBe("IGNORED_BY_ENGINE");
+  expect(report.result.inlined_reasoning_length).toBeGreaterThan(0);
+  expect(report.result.grounded_answer_match).toBe(false);
+  expect(report.result.classification).toBe("REASONING_ONLY");
+  expect(report.result.bounded_output_viable).toBe(false);
+});
+
+test("a grounding profile that answers plainly reports a match and no separation problem", async () => {
+  const profile = diagnosticProfile("exact_grounding");
+  if (!profile) throw new Error("exact_grounding profile is missing");
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([deltaFrame("LST-QUAL-4417"), finishFrame("stop"), usageFrame(9, null)]),
+    ),
+    profile,
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.result.grounded_answer_match).toBe(true);
+  expect(report.reasoning.separation.state).toBe("SUPPORTED");
+});
+
+test("a malformed profile fails typed rather than as an unhandled defect", async () => {
+  const base = diagnosticProfile("protocol_canary");
+  if (!base) throw new Error("protocol_canary profile is missing");
+  const broken = { ...base, first_token_timeout_ms: 99_999, timeout_ms: 100 };
+  const captured = await Effect.runPromise(
+    runQualificationProbe({
+      base_url: "http://127.0.0.1:1",
+      model: MODEL_ID,
+      profile: broken,
+      engine: "vllm",
+      engine_image: null,
+      api_key: null,
+      probed_at: PROBED_AT,
+    }).pipe(Effect.catch((error) => Effect.succeed(error))),
+  );
+  expect(captured).toBeInstanceOf(DiagnosticProfileError);
+  if (!(captured instanceof DiagnosticProfileError)) {
+    throw new Error("expected a typed profile failure");
+  }
+  expect(captured._tag).toBe("DiagnosticProfileError");
+  expect(captured.detail).toContain("first token");
 });

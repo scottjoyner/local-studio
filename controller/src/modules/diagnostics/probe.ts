@@ -19,8 +19,9 @@ import {
   resolveReasoningBudget,
 } from "./reasoning-support";
 import {
-  assertProfileBounds,
+  DiagnosticProfileError,
   modelIdentityFrom,
+  profileBoundsProblem,
   runtimeIdentityFrom,
 } from "./runtime-identity";
 
@@ -53,9 +54,14 @@ const evidence = (lines: readonly string[]): readonly string[] => lines.filter((
 
 export const runQualificationProbe = (
   input: QualificationProbeInput,
-): Effect.Effect<DiagnosticReport> =>
+): Effect.Effect<DiagnosticReport, DiagnosticProfileError> =>
   Effect.gen(function* () {
-    assertProfileBounds(input.profile);
+    const boundsProblem = profileBoundsProblem(input.profile);
+    if (boundsProblem !== null) {
+      return yield* Effect.fail(
+        new DiagnosticProfileError({ profile: input.profile.name, detail: boundsProblem }),
+      );
+    }
 
     const catalog = yield* readModelCatalog({
       baseUrl: input.base_url,
@@ -99,14 +105,9 @@ export const runQualificationProbe = (
       error_detail: attempt.error_detail,
     });
 
-    const observedSeparation =
-      separation.state === "SUPPORTED" && separation.mechanism === "server_flag"
-        ? {
-            requested: input.profile.reasoning_budget_tokens !== null,
-            separated: anatomy !== null && anatomy.reasoning_merged_into_content === false,
-          }
-        : { requested: false, separated: true };
-    const resolvedSeparation = observeReasoningSeparation(separation, observedSeparation);
+    const resolvedSeparation = observeReasoningSeparation(separation, {
+      separated: anatomy !== null && !anatomy.reasoning_merged_into_content,
+    });
     const consumed = reasoningConsumedBudget(anatomy);
 
     const notes = evidence([

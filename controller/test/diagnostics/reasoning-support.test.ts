@@ -14,7 +14,7 @@ import {
   buildDiagnosticRequestBody,
   groundedAnswerMatches,
 } from "../../src/modules/diagnostics/diagnostic-request";
-import { assertProfileBounds } from "../../src/modules/diagnostics/runtime-identity";
+import { profileBoundsProblem } from "../../src/modules/diagnostics/runtime-identity";
 
 test("llama.cpp reports the launch-time budget flag it actually has", () => {
   const resolution = resolveReasoningBudget({
@@ -90,19 +90,14 @@ test("separation is supported only where the engine actually splits reasoning ou
 
 test("a runtime that answers without separating reasoning is IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("llamacpp");
-  const observed = observeReasoningSeparation(separation, {
-    requested: true,
-    separated: false,
-  });
+  const observed = observeReasoningSeparation(separation, { separated: false });
   expect(observed.state).toBe("IGNORED_BY_ENGINE");
   expect(observed.engine_flag).toBe("--reasoning-format");
 });
 
 test("an unsupported directive is never upgraded to IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("mlx");
-  expect(observeReasoningSeparation(separation, { requested: true, separated: false }).state).toBe(
-    "UNSUPPORTED",
-  );
+  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe("UNSUPPORTED");
 });
 
 test("every catalog profile is bounded, self-consistent, and node-agnostic", () => {
@@ -114,7 +109,7 @@ test("every catalog profile is bounded, self-consistent, and node-agnostic", () 
     "bounded_code",
   ]);
   for (const profile of profiles) {
-    assertProfileBounds(profile);
+    expect(profileBoundsProblem(profile)).toBeNull();
     expect(profile.max_output_tokens).toBeGreaterThan(0);
     expect(profile.max_input_tokens).toBeGreaterThan(profile.prompt.length);
     expect(profile.first_token_timeout_ms).toBeLessThan(profile.timeout_ms);
@@ -175,4 +170,62 @@ test("grounding is reported as evidence and never as a classification", () => {
   expect(groundedAnswerMatches(exact, "the token is LST-QUAL-4417")).toBe(true);
   expect(groundedAnswerMatches(exact, "I cannot help with that")).toBe(false);
   expect(groundedAnswerMatches(code, "function add(a, b) {}")).toBeNull();
+});
+test("a malformed profile is rejected by a pure check rather than a throw", () => {
+  const base = diagnosticProfile("protocol_canary");
+  if (!base) throw new Error("protocol_canary profile is missing");
+  expect(profileBoundsProblem({ ...base, first_token_timeout_ms: 99_999 })).toContain(
+    "first token",
+  );
+  expect(profileBoundsProblem({ ...base, max_output_tokens: 0 })).toContain("max_output_tokens");
+  expect(profileBoundsProblem({ ...base, reasoning_budget_tokens: 9_999 })).toContain(
+    "no room for a final answer",
+  );
+  expect(profileBoundsProblem({ ...base, reasoning_budget_tokens: -1 })).toContain(
+    "not a non-negative integer",
+  );
+  expect(profileBoundsProblem(base)).toBeNull();
+});
+
+test("the profile catalog is frozen so one probe cannot change the next", () => {
+  const profile = diagnosticProfile("protocol_canary");
+  if (!profile) throw new Error("protocol_canary profile is missing");
+  expect(Object.isFrozen(profile)).toBe(true);
+  expect(Object.isFrozen(profile.stop)).toBe(true);
+  expect(Object.isFrozen(allDiagnosticProfiles())).toBe(true);
+  expect(() => {
+    (profile as { max_output_tokens: number }).max_output_tokens = 999_999;
+  }).toThrow();
+  expect(diagnosticProfile("protocol_canary")?.max_output_tokens).toBe(16);
+});
+
+test("a stop sequence reaches the request body when a profile declares one", () => {
+  const base = diagnosticProfile("protocol_canary");
+  if (!base) throw new Error("protocol_canary profile is missing");
+  const withStop = { ...base, stop: ["\n\n"] };
+  const { body } = buildDiagnosticRequestBody({
+    profile: withStop,
+    model: "candidate",
+    engine: "llamacpp",
+  });
+  expect(body["stop"]).toEqual(["\n\n"]);
+});
+
+test("a profile without a stop sequence sends no stop field", () => {
+  const base = diagnosticProfile("protocol_canary");
+  if (!base) throw new Error("protocol_canary profile is missing");
+  const { body } = buildDiagnosticRequestBody({
+    profile: base,
+    model: "candidate",
+    engine: "llamacpp",
+  });
+  expect(body["stop"]).toBeUndefined();
+});
+
+test("separation is judged even when the profile asked for no reasoning budget", () => {
+  const separation = reasoningSeparationFor("llamacpp");
+  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe(
+    "IGNORED_BY_ENGINE",
+  );
+  expect(observeReasoningSeparation(separation, { separated: true }).state).toBe("SUPPORTED");
 });

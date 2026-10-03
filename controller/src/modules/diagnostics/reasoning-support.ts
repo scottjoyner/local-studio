@@ -210,15 +210,21 @@ export const resolveReasoningBudget = ({
   };
 };
 
+/**
+ * Downgrades a claimed separation directive when the response shows the
+ * reasoning arriving inline instead. Deliberately independent of whether the
+ * profile asked for a reasoning budget: the directive is a server-side flag,
+ * not something the request carries, so inline reasoning on a plain grounding
+ * profile is exactly the failure this has to catch.
+ */
 export const observeReasoningSeparation = (
   resolution: ReasoningSeparationResolution,
-  observation: { requested: boolean; separated: boolean },
+  observation: { separated: boolean },
 ): ReasoningSeparationResolution => {
-  if (!observation.requested || observation.separated) return resolution;
-  if (resolution.state === "UNSUPPORTED") return resolution;
+  if (observation.separated || resolution.state !== "SUPPORTED") return resolution;
   return {
     ...resolution,
     state: "IGNORED_BY_ENGINE",
-    detail: `The runtime answered 200 but the reasoning never reached its own field, so ${resolution.engine_flag ?? "the configured directive"} had no effect on this request.`,
+    detail: `The runtime answered 200 but reasoning arrived inline instead of in its own field, so ${resolution.engine_flag ?? "the configured directive"} had no effect on this model or template.`,
   };
 };

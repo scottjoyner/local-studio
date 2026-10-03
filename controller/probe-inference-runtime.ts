@@ -18,7 +18,7 @@
  */
 
 import { resolve } from "node:path";
-import { Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { runQualificationProbe } from "./src/modules/diagnostics/probe";
 import {
   diagnosticProfile,
@@ -29,7 +29,6 @@ import {
   readRecipeFromRegistry,
   recipeEvidence,
 } from "./src/modules/diagnostics/evidence";
-import { assertProfileBounds } from "./src/modules/diagnostics/runtime-identity";
 import type { DiagnosticReport, RecipeQualificationEvidence } from "./contracts/inference-diagnostics";
 
 const USAGE = [
@@ -149,7 +148,6 @@ const main = async (args: readonly string[]): Promise<number> => {
   }
   const profile = diagnosticProfile(options.profile);
   if (!profile) throw new UsageError(`unknown profile ${options.profile}`);
-  assertProfileBounds(profile);
 
   const outcome = await Effect.runPromiseExit(
     runQualificationProbe({
@@ -163,7 +161,9 @@ const main = async (args: readonly string[]): Promise<number> => {
     }),
   );
   if (Exit.isFailure(outcome)) {
-    throw new Error(`probe failed: ${String(outcome.cause)}`);
+    const failure = Cause.findErrorOption(outcome.cause);
+    if (failure._tag === "Some") throw failure.value;
+    throw new Error(`probe failed: ${String(Cause.squash(outcome.cause))}`);
   }
 
   const report: DiagnosticReport = outcome.value;

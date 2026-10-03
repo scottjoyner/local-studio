@@ -227,3 +227,17 @@ test("a negative recipe budget is invalid regardless of any output cap", async (
   expect(evidence.reasoning.state).toBe("INVALID_CONFIGURATION");
   expect(evidence.reasoning.detail).toContain("negative");
 });
+
+test("a recipe that declares no budget reports null rather than borrowing the profile's", async () => {
+  const withoutBudget: Record<string, unknown> = { ...LLAMACPP_SERVE };
+  delete withoutBudget["max_thinking_tokens"];
+  writeRegistry(registryWith(withoutBudget, "silent-llamacpp"));
+  const recipe = readRecipeFromRegistry(registryDirectory, "silent-llamacpp");
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  expect(profile.reasoning_budget_tokens).toBe(256);
+
+  const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
+  expect(evidence.reasoning.requested).toBeNull();
+  expect(evidence.reasoning.state).toBe("SUPPORTED");
+});

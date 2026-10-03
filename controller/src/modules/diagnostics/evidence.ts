@@ -144,7 +144,7 @@ export const recipeEvidence = ({
 }: RecipeEvidenceInput): RecipeQualificationEvidence => {
   const budget: ReasoningBudgetResolution = resolveReasoningBudget({
     engine: recipe.backend,
-    requested: recipe.max_thinking_tokens ?? profile.reasoning_budget_tokens,
+    requested: recipe.max_thinking_tokens,
     maxOutputTokens: null,
   });
   const engine = ENGINE_INCOMPATIBILITIES[recipe.backend] ?? [];
