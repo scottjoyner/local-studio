@@ -42,7 +42,7 @@ const openStream = (chunks: readonly Uint8Array[]): Response =>
 const pacedStream = (head: readonly Uint8Array[], tail: readonly Uint8Array[]): Response =>
   new Response(
     new ReadableStream<Uint8Array>({
-      async start(controller: ReadableStreamDefaultController<Uint8Array>) {
+      async start(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
         for (const chunk of head) controller.enqueue(chunk);
         await Bun.sleep(120);
         for (const chunk of tail) controller.enqueue(chunk);
