@@ -1,5 +1,8 @@
 # The Models page
 
+Status: CURRENT_DEVELOPER. This documents the Models page UI shell, not the model
+catalog data itself. The catalog lives in `controller/contracts/model-index.json`.
+
 Four tabs, one table. `frontend/src/features/recipes/recipes-content/catalog-table-shell.tsx`
 holds the primitives — frame, header cell, group row, data row, numeric cell,
 hover action — and Recommended, Search Hugging Face, Your servers, and Downloads

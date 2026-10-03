@@ -1,5 +1,8 @@
 # System-One advisory context
 
+Status: CURRENT_OPERATOR / reference. The advisory contract and its flags are
+accurate against the current agent-runtime implementation.
+
 Local Studio can consume a completed System-One advisory result before each Pi coding-agent turn.
 
 This integration is intentionally advisory. It does not change Local Studio's selected model, active

@@ -1,5 +1,8 @@
 # R9700 Bonsai registry handoff
 
+Status: CURRENT_OPERATOR. Follows `docs/r9700-ternary-bonsai2.md` acceptance.
+Renders a registry candidate proposal; it never publishes or validates.
+
 This stacked follow-up converts an accepted Local Studio evidence bundle into a reviewable `local-ai-registry` candidate proposal. It does not publish to the registry and it never emits `status: validated`.
 
 ## Boundary

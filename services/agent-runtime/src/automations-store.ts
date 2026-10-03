@@ -233,5 +233,3 @@ export async function deleteAutomation(id: string): Promise<boolean> {
   await rm(path.join(resolveDataDir(), AUTOMATIONS_SUBDIR, `${id}.json`), { force: true });
   return true;
 }
-
-export const automationSummaryLimit = MAX_SUMMARY_CHARS;

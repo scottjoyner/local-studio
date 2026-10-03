@@ -816,19 +816,6 @@ function completeGoogleAuthorizationUnlocked(
   });
 }
 
-export function completeGoogleAuthorization(
-  account: GoogleWorkspacePluginId,
-  input: { state: string; code: string },
-  dependencies: GoogleOAuthDependencies = defaultDependencies,
-  vault: OAuthVault = desktopOAuthVault,
-): Effect.Effect<GoogleAccountView, GoogleAccountError> {
-  return accountMutation.withPermit(
-    completeGoogleAuthorizationUnlocked(account, input, undefined, dependencies, vault).pipe(
-      Effect.map((commit) => commit.account),
-    ),
-  );
-}
-
 export function completeGoogleAuthorizationWithActivation<A>(
   account: GoogleWorkspacePluginId,
   input: { state: string; code: string },
@@ -981,6 +968,3 @@ export function googleAuthorizationHeaders(
   );
 }
 
-export function clearGoogleAuthorizationCache(): void {
-  for (const account of GOOGLE_WORKSPACE_PLUGIN_IDS) accessTokens.delete(account);
-}

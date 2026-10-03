@@ -7,7 +7,13 @@ import { ArrowUpCircle, Check, XCircle } from "@/ui/icon-registry";
 import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import api from "@/lib/api/client";
-import type { EngineJob, RuntimeBackendInfo, RuntimeTarget, SystemRuntimeInfo } from "@/lib/types";
+import type {
+  EngineBackend,
+  EngineJob,
+  RuntimeBackendInfo,
+  RuntimeTarget,
+  SystemRuntimeInfo,
+} from "@/lib/types";
 import { StatusPill, Spinner } from "@/ui";
 import { SettingsGroup, SettingsNotice } from "./settings-ui";
 import {
@@ -291,7 +297,7 @@ function BackendRow({
   info,
   active,
 }: {
-  id: string;
+  id: EngineBackend;
   info: RuntimeBackendInfo;
   active?: boolean;
 }) {
@@ -359,7 +365,7 @@ function EngineStatus({ installed, active }: { installed: boolean; active?: bool
   return <RuntimeTargetStatus installed={installed} active={active} />;
 }
 
-function upgradeHandler(id: string) {
+function upgradeHandler(id: EngineBackend) {
   if (id === "vllm" || id === "sglang" || id === "llamacpp") return () => api.upgradeRuntime(id);
   return undefined;
 }

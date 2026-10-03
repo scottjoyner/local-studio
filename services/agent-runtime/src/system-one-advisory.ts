@@ -785,13 +785,6 @@ function consumeSystemOneAdvisoryPrompt(
 }
 
 
-export function appendSystemOneAdvisoryPrompt(
-  systemPrompt: string,
-  context: ConsumerContext,
-): string | null {
-  return consumeSystemOneAdvisoryPrompt(systemPrompt, context)?.systemPrompt ?? null;
-}
-
 export function createSystemOneAdvisoryPromptExtension(
   getContext: () => RuntimeEvidenceContext,
 ) {

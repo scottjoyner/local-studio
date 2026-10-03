@@ -14,8 +14,9 @@ routes, agent runtime integration, controller API bridge, and UI kit.
 - `/settings` — application, connection, appearance, agent, and setup settings.
 - `/logs` — controller log sessions.
 
-`/recipes`, `/discover`, `/integrations`, and `/server` are compatibility
-redirects into Configure. New navigation must target the canonical route.
+`/recipes` and `/discover` are compatibility redirects into `/models`;
+`/integrations` and `/server` redirect into the matching Configure section.
+New navigation must target the canonical route.
 
 ## Architecture
 
@@ -73,7 +74,7 @@ team has an active agreement.
 
 ## Controller Connection
 
-Controller URL resolution lives in `src/lib/backend-config.ts` and accepts
+Controller URL resolution lives in `src/lib/api/connection.ts`, which reads the shared resolver in `shared/agent/backend-url.ts`, and accepts
 `BACKEND_URL`, `NEXT_PUBLIC_BACKEND_URL`, or `LOCAL_STUDIO_BACKEND_URL`. Durable
 desktop preferences preserve controller URLs locally without copying controller
 credentials into the controller database.
@@ -84,7 +85,7 @@ credentials into the controller database.
 - `src/features/agent/` — Workbench sessions, messages, workspace, and UI.
 - `src/features/configure/` — consolidated controller configuration.
 - `src/features/settings/` — application settings and runtime target controls.
-- `src/features/integrations/` — plugins, connectors, skills, and speech.
+- `src/features/integrations/` — plugins, connectors, and skills.
 - `src/lib/` and `src/hooks/` — shared modules with multiple feature consumers.
 - `src/ui/` — shared primitives and ZCode design tokens.
 - `desktop/` — Electron main process, resources, signing, and packaging.

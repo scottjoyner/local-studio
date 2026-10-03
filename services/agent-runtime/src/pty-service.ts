@@ -288,7 +288,3 @@ export function closePtySession(id: string): void {
   }
 }
 
-export function closePtySessionByOwner(ownerKey: string): void {
-  const session = ownedSession(ownerKey);
-  if (session) closePtySession(session.id);
-}

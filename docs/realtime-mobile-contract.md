@@ -1,5 +1,12 @@
 # Realtime mobile contract
 
+Status: SUPERSEDED / inert. Retained as design history, not as a description of
+current behavior. The agent-runtime realtime gateway and
+`shared/agent/litter-bridge.ts` were deleted; only
+`shared/agent/litter-bridge-realtime-v1.fixture.json` survives, so the schema and
+type locations named below no longer exist and the error codes in this document
+are unimplemented. Do not use this file as an interface reference.
+
 Status: contract version 1, not yet exposed by the agent-runtime gateway.
 
 The realtime contract extends `litter-bridge/v1`; it does not create another endpoint or authentication model. Local Studio owns provider credentials, capability discovery, session creation, and teardown. Alleycat forwards authenticated control messages. Litter keeps native WebRTC peer connections and platform audio processing. Media does not traverse Alleycat in version 1.
