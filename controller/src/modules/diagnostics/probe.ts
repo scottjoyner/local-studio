@@ -107,6 +107,7 @@ export const runQualificationProbe = (
 
     const resolvedSeparation = observeReasoningSeparation(separation, {
       separated: anatomy !== null && !anatomy.reasoning_merged_into_content,
+      responded: attempt.ok && anatomy !== null,
     });
     const consumed = reasoningConsumedBudget(anatomy);
 

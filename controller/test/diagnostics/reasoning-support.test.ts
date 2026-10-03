@@ -90,14 +90,14 @@ test("separation is supported only where the engine actually splits reasoning ou
 
 test("a runtime that answers without separating reasoning is IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("llamacpp");
-  const observed = observeReasoningSeparation(separation, { separated: false });
+  const observed = observeReasoningSeparation(separation, { separated: false, responded: true });
   expect(observed.state).toBe("IGNORED_BY_ENGINE");
   expect(observed.engine_flag).toBe("--reasoning-format");
 });
 
 test("an unsupported directive is never upgraded to IGNORED_BY_ENGINE", () => {
   const separation = reasoningSeparationFor("mlx");
-  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe("UNSUPPORTED");
+  expect(observeReasoningSeparation(separation, { separated: false, responded: true }).state).toBe("UNSUPPORTED");
 });
 
 test("every catalog profile is bounded, self-consistent, and node-agnostic", () => {
@@ -224,8 +224,15 @@ test("a profile without a stop sequence sends no stop field", () => {
 
 test("separation is judged even when the profile asked for no reasoning budget", () => {
   const separation = reasoningSeparationFor("llamacpp");
-  expect(observeReasoningSeparation(separation, { separated: false }).state).toBe(
+  expect(observeReasoningSeparation(separation, { separated: false, responded: true }).state).toBe(
     "IGNORED_BY_ENGINE",
   );
-  expect(observeReasoningSeparation(separation, { separated: true }).state).toBe("SUPPORTED");
+  expect(observeReasoningSeparation(separation, { separated: true, responded: true }).state).toBe("SUPPORTED");
+});
+
+test("a runtime that never answered is UNOBSERVED, not IGNORED_BY_ENGINE", () => {
+  const separation = reasoningSeparationFor("llamacpp");
+  const observed = observeReasoningSeparation(separation, { separated: false, responded: false });
+  expect(observed.state).toBe("UNOBSERVED");
+  expect(observed.detail).not.toContain("answered 200");
 });

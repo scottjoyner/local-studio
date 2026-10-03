@@ -219,8 +219,19 @@ export const resolveReasoningBudget = ({
  */
 export const observeReasoningSeparation = (
   resolution: ReasoningSeparationResolution,
-  observation: { separated: boolean },
+  // observed is false both when reasoning arrived inline and when no response arrived at
+  // all, so the caller has to say which. Conflating the two asserted a 200 for a runtime
+  // that never answered.
+  observation: { separated: boolean; responded: boolean },
 ): ReasoningSeparationResolution => {
+  if (observation.responded === false) {
+    return {
+      ...resolution,
+      state: "UNOBSERVED",
+      detail:
+        "No response arrived, so whether the engine honours the separation flag could not be observed.",
+    };
+  }
   if (observation.separated || resolution.state !== "SUPPORTED") return resolution;
   return {
     ...resolution,

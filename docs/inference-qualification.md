@@ -80,6 +80,10 @@ States:
   answered without it taking effect. Reached from observation, not assumption.
 - `INVALID_CONFIGURATION` — negative, non-integer, or larger than the profile's
   output cap.
+- `UNOBSERVED` — no response arrived, so nothing could be observed either way.
+  Reached when the transport failed or the request timed out. Distinct from
+  `IGNORED_BY_ENGINE`, which claims the runtime answered and ignored the flag;
+  that claim cannot be made about a runtime that never replied.
 
 `vLLM` and `SGLang` expose `--reasoning-parser`, which decides *where* reasoning
 is reported, not *how much* is generated. That is a separation control, not a
