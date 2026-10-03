@@ -19,6 +19,7 @@ import {
   reasoningSeparationFor,
   resolveReasoningBudget,
 } from "./reasoning-support";
+import { checkDialect, dialectEvidence } from "./dialect-check";
 import {
   DiagnosticProfileError,
   modelIdentityFrom,
@@ -122,8 +123,16 @@ export const runQualificationProbe = (
     });
     const consumed = reasoningConsumedBudget(anatomy);
 
+    const dialect = checkDialect({
+      engine: input.engine,
+      sentBoundedOutputField: bounded_output.field,
+      separation: resolvedSeparation,
+      anatomy,
+    });
+
     const notes = evidence([
       ...outcome.evidence,
+      ...dialectEvidence(dialect),
       bounded_output.reason,
       `reasoning budget state ${resolvedBudget.state}: ${resolvedBudget.detail}`,
       reasoning_budget_sent ? "" : "no reasoning budget reached the request for this engine",
@@ -186,6 +195,7 @@ export const runQualificationProbe = (
       },
       reasoning: { budget: resolvedBudget, separation: resolvedSeparation },
       anatomy,
+      dialect,
       evidence: notes,
     };
   });

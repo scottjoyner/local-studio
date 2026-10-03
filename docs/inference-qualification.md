@@ -553,6 +553,49 @@ without saying why, so an operator could not distinguish "no reasoning" from
 "this engine does not count reasoning". The evidence line is now engine-agnostic
 and states which is the case.
 
+### Verifying the engine assumptions without the hardware
+
+llama.cpp is verified live. vLLM and SGLang are not, and no vLLM can be run on
+this box — no local image, no discrete VRAM, and pulling a ROCm vLLM image onto a
+workstation running other services is not a trade worth making for a checkup.
+
+Rather than leave the vLLM and SGLang rows of the support table as documentation
+claims, the report now **checks them against the live response**. `dialect`
+records the engine's documented reasoning field and bounded-output field, what
+the runtime actually used, whether they matched, and a list of mismatches:
+
+```json
+"dialect": {
+  "engine": "llamacpp",
+  "expected_reasoning_source": "reasoning_content",
+  "expected_bounded_output_field": "max_tokens",
+  "observed_reasoning_source": "reasoning_content",
+  "reasoning_source_matched": true,
+  "bounded_output_field_matched": true,
+  "mismatches": ["llamacpp reports no reasoning token count, so reasoning_tokens is null rather than zero and reasoning_length is authoritative"]
+}
+```
+
+Verified live in both directions. Declaring `llamacpp` against a real llama-server
+matches on both axes. Declaring `vllm` against that same server — a
+deliberately wrong declaration — produces:
+
+```
+mismatches: ["vllm is documented to report reasoning in reasoning but the runtime used reasoning_content"]
+```
+
+So the first person to run this against a real vLLM gets a definitive answer to
+"does vLLM still use `reasoning`, or has it moved again", instead of a silent
+pass that would only fail later. The same check covers
+`max_completion_tokens` acceptance and whether the engine reports reasoning
+tokens at all.
+
+Supporting this required recording `anatomy.reasoning_source`, the key the
+runtime *actually* used. That is only trustworthy if it survives streaming
+assembly, and it did not at first: the SSE accumulator folded every reasoning
+field into `reasoning_content`, erasing the one piece of evidence that
+distinguishes the dialects. It now preserves the original key end to end.
+
 ## 11. Authority boundaries preserved
 
 Unchanged, and deliberately unreachable from this code: provider routing,

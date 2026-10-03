@@ -30,6 +30,7 @@ export {
 export { readModelCatalog, attemptDiagnosticRequest } from "./diagnostic-transport";
 export type { AbortStage, TransportAttempt } from "./diagnostic-transport";
 export { readResponseAnatomy } from "./response-anatomy";
+export { checkDialect, dialectEvidence } from "./dialect-check";
 export {
   boundedOutputViable,
   classifyDiagnostic,

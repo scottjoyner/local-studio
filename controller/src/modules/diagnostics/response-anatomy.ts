@@ -1,5 +1,8 @@
-import type { ResponseAnatomy } from "@local-studio/contracts/inference-diagnostics";
-import { createThinkRewriter, firstReasoningField } from "../proxy/reasoning";
+import type {
+  ReasoningSource,
+  ResponseAnatomy,
+} from "@local-studio/contracts/inference-diagnostics";
+import { createThinkRewriter, REASONING_FIELDS } from "../proxy/reasoning";
 
 type Rec = Record<string, unknown>;
 
@@ -65,9 +68,22 @@ const usageTokens = (usage: Rec): {
   };
 };
 
+const reasoningField = (
+  message: Rec,
+): { readonly source: ReasoningSource | null; readonly text: string } => {
+  for (const field of REASONING_FIELDS) {
+    const value = message[field];
+    if (typeof value === "string" && value.length > 0) {
+      return { source: field, text: value };
+    }
+  }
+  return { source: null, text: "" };
+};
+
 const unknownAnatomy = (observedFields: readonly string[]): ResponseAnatomy => ({
   content: "",
   reasoning: "",
+  reasoning_source: null,
   inlined_reasoning: "",
   reasoning_merged_into_content: false,
   tool_call_count: 0,
@@ -97,14 +113,15 @@ export const readResponseAnatomy = (payload: unknown): ResponseAnatomy => {
 
   const rawContent = textOf(message["content"]);
   const inline = splitInlineReasoning(rawContent);
-  const separatedReasoning = firstReasoningField(message);
+  const separated = reasoningField(message);
   const tokens = usageTokens(isRec(payload["usage"]) ? payload["usage"] : {});
   const inlined = inline.inlined;
-  const reasoning = [separatedReasoning, inlined].filter(Boolean).join("\n");
+  const reasoning = [separated.text, inlined].filter(Boolean).join("\n");
 
   return {
     content: inline.content,
     reasoning,
+    reasoning_source: inlined ? "inline" : separated.source,
     inlined_reasoning: inlined,
     reasoning_merged_into_content: inlined.length > 0,
     tool_call_count: countToolCalls(message),

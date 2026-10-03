@@ -1,7 +1,8 @@
 import { performance } from "node:perf_hooks";
 import { Effect } from "effect";
 import type { DiagnosticProfile } from "@local-studio/contracts/inference-diagnostics";
-import { firstReasoningField } from "../proxy/reasoning";
+import type { ReasoningSource } from "@local-studio/contracts/inference-diagnostics";
+import { REASONING_FIELDS } from "../proxy/reasoning";
 import { catalogFromPayload, emptyCatalog, type ModelCatalog } from "./runtime-identity";
 
 type Rec = Record<string, unknown>;
@@ -34,6 +35,12 @@ interface Accumulator {
    * would report one call as however many argument chunks it took.
    */
   toolCallKeys: Set<string>;
+  /**
+   * Which key the runtime actually used. vLLM reports `reasoning` while
+   * llama-server and SGLang report `reasoning_content`, and folding them into
+   * one field would erase the only evidence of which dialect is speaking.
+   */
+  reasoningSource: ReasoningSource | null;
   finishReason: string | null;
   usage: Rec | null;
   frames: number;
@@ -44,6 +51,7 @@ const emptyAccumulator = (): Accumulator => ({
   content: "",
   reasoning: "",
   toolCallKeys: new Set(),
+  reasoningSource: null,
   finishReason: null,
   usage: null,
   frames: 0,
@@ -80,6 +88,14 @@ const deltaText = (value: unknown): string => {
   return joined;
 };
 
+const frameReasoning = (delta: Rec): { readonly field: ReasoningSource; readonly text: string } | null => {
+  for (const field of REASONING_FIELDS) {
+    const value = delta[field];
+    if (typeof value === "string" && value.length > 0) return { field, text: value };
+  }
+  return null;
+};
+
 const mergeFrame = (accumulator: Accumulator, payload: unknown): void => {
   if (!isRec(payload)) return;
   accumulator.frames += 1;
@@ -101,7 +117,11 @@ const mergeFrame = (accumulator: Accumulator, payload: unknown): void => {
         : null;
     if (!delta) continue;
     accumulator.content += deltaText(delta["content"]);
-    accumulator.reasoning += firstReasoningField(delta);
+    const reasoning = frameReasoning(delta);
+    if (reasoning !== null) {
+      accumulator.reasoningSource ??= reasoning.field;
+      accumulator.reasoning += reasoning.text;
+    }
     const calls = delta["tool_calls"];
     if (Array.isArray(calls)) {
       calls.forEach((call, position) => accumulator.toolCallKeys.add(toolCallKey(call, position)));
@@ -111,7 +131,9 @@ const mergeFrame = (accumulator: Accumulator, payload: unknown): void => {
 
 const assembledBody = (accumulator: Accumulator): Rec => {
   const message: Rec = { role: "assistant", content: accumulator.content };
-  if (accumulator.reasoning) message["reasoning_content"] = accumulator.reasoning;
+  if (accumulator.reasoning) {
+    message[accumulator.reasoningSource ?? "reasoning_content"] = accumulator.reasoning;
+  }
   if (accumulator.toolCallKeys.size > 0) {
     message["tool_calls"] = Array.from({ length: accumulator.toolCallKeys.size }, (_, index) => ({
       index,

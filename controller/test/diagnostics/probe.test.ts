@@ -784,3 +784,143 @@ test("inline reasoning is lifted out of content on a real mixed response", async
   expect(report.reasoning.separation.state).toBe("IGNORED_BY_ENGINE");
   expect(report.result.classification).toBe("OUTPUT_OK");
 });
+
+test("the report records which key actually carried the reasoning", async () => {
+  const asContent = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning_content: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("OK"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(asContent.anatomy?.reasoning_source).toBe("reasoning_content");
+  expect(asContent.dialect.reasoning_source_matched).toBe(true);
+
+  const asReasoning = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("OK"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile({}),
+    "vllm",
+  );
+  expect(asReasoning.anatomy?.reasoning_source).toBe("reasoning");
+  expect(asReasoning.dialect.observed_reasoning_source).toBe("reasoning");
+  expect(asReasoning.dialect.reasoning_source_matched).toBe(true);
+});
+
+test("inline reasoning is reported as a dialect mismatch against the declared engine", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([deltaFrame("<think>monologue</think>OK"), finishFrame("stop")]),
+    ),
+    fastProfile(),
+  );
+  expect(report.anatomy?.reasoning_source).toBe("inline");
+  expect(report.dialect.reasoning_source_matched).toBe(false);
+  expect(report.dialect.mismatches.join(" ")).toContain("arrived inside content");
+  expect(report.reasoning.separation.state).toBe("IGNORED_BY_ENGINE");
+});
+
+test("a runtime speaking the wrong reasoning field is flagged, not tolerated", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning_content: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("OK"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile(),
+    "vllm",
+  );
+  expect(report.anatomy?.reasoning_source).toBe("reasoning_content");
+  expect(report.dialect.reasoning_source_matched).toBe(false);
+  expect(report.dialect.mismatches.join(" ")).toContain("documented to report reasoning in reasoning");
+  expect(report.evidence.join(" ")).toContain("documented to report reasoning in reasoning");
+});
+
+test("the bounded-output field actually sent is checked against the engine", async () => {
+  const report = await probe(
+    withModelCatalog(() => openStream([deltaFrame("OK"), finishFrame("stop")])),
+    fastProfile(),
+    "llamacpp",
+  );
+  expect(report.request.bounded_output_field).toBe("max_tokens");
+  expect(report.dialect.bounded_output_field_matched).toBe(true);
+  expect(report.dialect.expected_bounded_output_field).toBe("max_tokens");
+});
+
+test("an engine that reports no reasoning token count is flagged as a dialect fact", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      openStream([
+        sseFrame({
+          choices: [{ index: 0, delta: { reasoning_content: "thinking" }, finish_reason: null }],
+        }),
+        deltaFrame("OK"),
+        finishFrame("stop"),
+      ]),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.reasoning_tokens).toBeNull();
+  expect(report.dialect.mismatches.join(" ")).toContain("null rather than zero");
+});
+
+test("an undeclared engine makes no dialect claims", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request: Request) => {
+      if (new URL(request.url).pathname === "/v1/models") {
+        return Response.json({ object: "list", data: [{ id: MODEL_ID, max_model_len: 4096 }] });
+      }
+      return openStream([deltaFrame("OK"), finishFrame("stop")]);
+    },
+  });
+  const profile = diagnosticProfile("protocol_canary");
+  if (!profile) throw new Error("protocol_canary profile is missing");
+  try {
+    const report = await Effect.runPromise(
+      runQualificationProbe({
+        base_url: `http://127.0.0.1:${server.port}`,
+        model: MODEL_ID,
+        profile,
+        engine: null,
+        engine_image: null,
+        api_key: null,
+        probed_at: PROBED_AT,
+      }),
+    );
+    expect(report.dialect.engine).toBeNull();
+    expect(report.dialect.reasoning_source_matched).toBeNull();
+    expect(report.dialect.bounded_output_field_matched).toBeNull();
+    expect(report.dialect.mismatches).toEqual([]);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("no usable response leaves every dialect claim unobserved rather than wrong", async () => {
+  const report = await probe(
+    withModelCatalog(() => Response.json({ error: { message: "not found" } }, { status: 404 })),
+    fastProfile(),
+  );
+  expect(report.anatomy).toBeNull();
+  expect(report.dialect.observed_reasoning_source).toBeNull();
+  expect(report.dialect.reasoning_source_matched).toBeNull();
+  expect(report.dialect.mismatches).toEqual([]);
+  expect(report.reasoning.separation.state).toBe("UNOBSERVED");
+});

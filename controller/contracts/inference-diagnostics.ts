@@ -75,9 +75,20 @@ export const DIAGNOSTIC_CLASSIFICATIONS = [
 
 export type DiagnosticClassification = (typeof DIAGNOSTIC_CLASSIFICATIONS)[number];
 
+export const REASONING_SOURCES = [
+  "reasoning_content",
+  "reasoning",
+  "reasoning_text",
+  "inline",
+] as const;
+
+export type ReasoningSource = (typeof REASONING_SOURCES)[number];
+
 export interface ResponseAnatomy {
   readonly content: string;
   readonly reasoning: string;
+  /** Which key carried it: "reasoning_content" | "reasoning" | "reasoning_text" | "inline" | null. */
+  readonly reasoning_source: ReasoningSource | null;
   readonly inlined_reasoning: string;
   readonly reasoning_merged_into_content: boolean;
   readonly tool_call_count: number;
@@ -119,6 +130,16 @@ export interface DiagnosticTiming {
   readonly timed_tokens: number | null;
 }
 
+export interface DiagnosticDialectCheck {
+  readonly engine: string | null;
+  readonly expected_reasoning_source: ReasoningSource | null;
+  readonly expected_bounded_output_field: string;
+  readonly observed_reasoning_source: ReasoningSource | null;
+  readonly reasoning_source_matched: boolean | null;
+  readonly bounded_output_field_matched: boolean | null;
+  readonly mismatches: readonly string[];
+}
+
 export interface DiagnosticReportRequest {
   readonly bounded_output_field: "max_completion_tokens" | "max_tokens";
   readonly bounded_output_reason: string;
@@ -153,6 +174,8 @@ export interface DiagnosticReport {
     readonly separation: ReasoningSeparationResolution;
   };
   readonly anatomy: ResponseAnatomy | null;
+  /** Live check of the declared engine's documented dialect against what arrived. */
+  readonly dialect: DiagnosticDialectCheck;
   readonly evidence: readonly string[];
 }
 
