@@ -1,0 +1,282 @@
+import type { Backend } from "@local-studio/contracts/recipes";
+import type {
+  ReasoningBudgetResolution,
+  ReasoningBudgetMechanism,
+  ReasoningBudgetState,
+  ReasoningSeparationResolution,
+} from "@local-studio/contracts/inference-diagnostics";
+
+interface EngineReasoningSupport {
+  readonly budget_state: ReasoningBudgetState;
+  readonly budget_mechanism: ReasoningBudgetMechanism;
+  readonly budget_engine_flag: string | null;
+  readonly budget_request_field: string | null;
+  readonly budget_detail: string;
+  readonly separation_state: ReasoningBudgetState;
+  readonly separation_mechanism: ReasoningBudgetMechanism;
+  readonly separation_engine_flag: string | null;
+  readonly separation_request_field: string | null;
+  readonly separation_detail: string;
+}
+
+const serverFlagBudget = (
+  flag: string,
+  detail: string,
+): Pick<
+  EngineReasoningSupport,
+  | "budget_state"
+  | "budget_mechanism"
+  | "budget_engine_flag"
+  | "budget_request_field"
+  | "budget_detail"
+> => ({
+  budget_state: "SUPPORTED",
+  budget_mechanism: "server_flag",
+  budget_engine_flag: flag,
+  budget_request_field: null,
+  budget_detail: detail,
+});
+
+const serverFlagSeparation = (
+  flag: string,
+  detail: string,
+): Pick<
+  EngineReasoningSupport,
+  | "separation_state"
+  | "separation_mechanism"
+  | "separation_engine_flag"
+  | "separation_request_field"
+  | "separation_detail"
+> => ({
+  separation_state: "SUPPORTED",
+  separation_mechanism: "server_flag",
+  separation_engine_flag: flag,
+  separation_request_field: null,
+  separation_detail: detail,
+});
+
+const unsupportedBudget = (detail: string): Pick<
+  EngineReasoningSupport,
+  | "budget_state"
+  | "budget_mechanism"
+  | "budget_engine_flag"
+  | "budget_request_field"
+  | "budget_detail"
+> => ({
+  budget_state: "UNSUPPORTED",
+  budget_mechanism: "none",
+  budget_engine_flag: null,
+  budget_request_field: null,
+  budget_detail: detail,
+});
+
+const unsupportedSeparation = (detail: string): Pick<
+  EngineReasoningSupport,
+  | "separation_state"
+  | "separation_mechanism"
+  | "separation_engine_flag"
+  | "separation_request_field"
+  | "separation_detail"
+> => ({
+  separation_state: "UNSUPPORTED",
+  separation_mechanism: "none",
+  separation_engine_flag: null,
+  separation_request_field: null,
+  separation_detail: detail,
+});
+
+const NO_BUDGET_FLAG =
+  "The engine exposes no reasoning token budget. Bounding the output cap is the only available control, which is why a reasoning model can still return no final content.";
+
+const SUPPORT: Readonly<Record<Backend, EngineReasoningSupport>> = {
+  llamacpp: {
+    ...serverFlagBudget(
+      "--reasoning-budget",
+      "llama-server bounds each thinking block with --reasoning-budget, re-arming the budget for every block. The value is fixed when the server starts, so a request against an already-running runtime cannot change it. Positive budgets need a build new enough to accept them; older llama-server only allowed -1 or 0 and would refuse to start.",
+    ),
+    ...serverFlagSeparation(
+      "--reasoning-format",
+      "llama-server splits reasoning out of content when --reasoning-format names a dialect the template emits. Without it, thoughts arrive inside content.",
+    ),
+  },
+  vllm: {
+    budget_state: "SUPPORTED",
+    budget_mechanism: "request_field",
+    budget_engine_flag: null,
+    budget_request_field: "thinking_token_budget",
+    budget_detail:
+      "vLLM takes a top-level thinking_token_budget per request and forces the model to emit the reasoning end token once reached. It only takes effect when the server was started with --reasoning-parser, and only for models whose parser defines reasoning boundary tokens. On any other model the field is accepted and silently does nothing, so the probe verifies the budget was honored instead of assuming it.",
+    ...serverFlagSeparation(
+      "--reasoning-parser",
+      "vLLM moves a recognized reasoning span out of content into reasoning_content. It controls where reasoning is reported, not how much is generated.",
+    ),
+  },
+  sglang: {
+    ...unsupportedBudget(NO_BUDGET_FLAG),
+    ...serverFlagSeparation(
+      "--reasoning-parser",
+      "SGLang moves a recognized reasoning span out of content into reasoning_content. It controls where reasoning is reported, not how much is generated.",
+    ),
+  },
+  mlx: {
+    ...unsupportedBudget(NO_BUDGET_FLAG),
+    ...unsupportedSeparation(
+      "mlx_lm.server is launched with no reasoning flags by this controller, so reasoning is never split out of content.",
+    ),
+  },
+};
+
+const ENGINE_ONLY_SUPPORT: Readonly<Record<string, EngineReasoningSupport>> = {
+  exllamav3: {
+    ...unsupportedBudget(NO_BUDGET_FLAG),
+    ...unsupportedSeparation(
+      "TabbyAPI is configured through config.yml and this controller passes it no reasoning flags, so reasoning is never split out of content.",
+    ),
+  },
+};
+
+const UNKNOWN_ENGINE: EngineReasoningSupport = {
+  ...unsupportedBudget(NO_BUDGET_FLAG),
+  ...unsupportedSeparation(
+    "No reasoning separation is known for this engine, so reasoning is expected to arrive inside content.",
+  ),
+};
+
+const invalid = (detail: string): ReasoningBudgetResolution => ({
+  field: "max_thinking_tokens",
+  requested: null,
+  state: "INVALID_CONFIGURATION",
+  mechanism: "none",
+  engine_flag: null,
+  request_field: null,
+  applies_to_request: false,
+  compared_against_output_cap: null,
+  detail,
+});
+
+const budgetInvalidity = (
+  requested: number,
+  maxOutputTokens: number | null,
+): string | null => {
+  if (!Number.isInteger(requested)) {
+    return `max_thinking_tokens ${requested} is not an integer; the field counts tokens.`;
+  }
+  if (requested < 0) {
+    return `max_thinking_tokens ${requested} is negative; a token budget cannot be negative.`;
+  }
+  if (maxOutputTokens !== null && requested > maxOutputTokens) {
+    return `max_thinking_tokens ${requested} exceeds the output cap ${maxOutputTokens}, leaving no room for a final answer.`;
+  }
+  return null;
+};
+
+export const reasoningSeparationFor = (engine: string | null): ReasoningSeparationResolution => {
+  const support = supportFor(engine);
+  return {
+    state: support.separation_state,
+    mechanism: support.separation_mechanism,
+    engine_flag: support.separation_engine_flag,
+    request_field: support.separation_request_field,
+    detail: support.separation_detail,
+  };
+};
+
+const supportFor = (engine: string | null): EngineReasoningSupport => {
+  if (!engine) return UNKNOWN_ENGINE;
+  if (Object.hasOwn(SUPPORT, engine)) return SUPPORT[engine as Backend];
+  if (Object.hasOwn(ENGINE_ONLY_SUPPORT, engine)) return ENGINE_ONLY_SUPPORT[engine]!;
+  return UNKNOWN_ENGINE;
+};
+
+export const resolveReasoningBudget = ({
+  engine,
+  requested,
+  maxOutputTokens,
+}: {
+  engine: string | null;
+  requested: number | null;
+  maxOutputTokens: number | null;
+}): ReasoningBudgetResolution => {
+  if (requested !== null) {
+    const problem = budgetInvalidity(requested, maxOutputTokens);
+    if (problem) return invalid(problem);
+  }
+  const support = supportFor(engine);
+  return {
+    field: "max_thinking_tokens",
+    requested,
+    compared_against_output_cap: maxOutputTokens,
+    state: support.budget_state,
+    mechanism: support.budget_mechanism,
+    engine_flag: support.budget_engine_flag,
+    request_field: support.budget_request_field,
+    applies_to_request: support.budget_mechanism === "request_field",
+    detail: support.budget_detail,
+  };
+};
+
+/**
+ * A tri-state, because a single boolean collapses two opposite situations:
+ * reasoning arrived inline, and nothing arrived at all. Making it a union means
+ * "reasoning was separated but no response was seen" cannot be expressed, which
+ * is the mistake that made a transport failure report IGNORED_BY_ENGINE.
+ */
+export type SeparationObservation =
+  | { readonly kind: "separated" }
+  | { readonly kind: "inline" }
+  | { readonly kind: "unobserved" };
+
+/**
+ * Downgrades a claimed per-request budget when the response shows reasoning
+ * running past the budget that was sent. A sent budget with no token count to
+ * check is UNOBSERVED rather than honored, because "could not measure" and
+ * "measured within budget" are different facts.
+ */
+export const observeReasoningBudget = (
+  resolution: ReasoningBudgetResolution,
+  observation: { readonly sent: boolean; readonly reasoningTokens: number | null },
+): ReasoningBudgetResolution => {
+  if (!observation.sent || !resolution.applies_to_request) return resolution;
+  if (resolution.state !== "SUPPORTED" || resolution.requested === null) return resolution;
+  if (observation.reasoningTokens === null) {
+    return {
+      ...resolution,
+      state: "UNOBSERVED",
+      detail: `${resolution.request_field} was sent with ${resolution.requested} but the runtime reported no reasoning token count, so the budget could not be verified.`,
+    };
+  }
+  if (observation.reasoningTokens <= resolution.requested) return resolution;
+  return {
+    ...resolution,
+    state: "IGNORED_BY_ENGINE",
+    detail: `${resolution.request_field} was sent with ${resolution.requested} but the runtime reported ${observation.reasoningTokens} reasoning tokens, so the budget did not take effect on this model.`,
+  };
+};
+
+/**
+ * Downgrades a claimed separation directive when the response shows reasoning
+ * arriving inline instead, and marks it UNOBSERVED when there was no response to
+ * judge. Deliberately independent of whether the profile asked for a reasoning
+ * budget: the directive is a server-side flag, not something the request
+ * carries, so inline reasoning on a plain grounding profile is exactly the
+ * failure this has to catch.
+ */
+export const observeReasoningSeparation = (
+  resolution: ReasoningSeparationResolution,
+  observation: SeparationObservation,
+): ReasoningSeparationResolution => {
+  if (resolution.state !== "SUPPORTED") return resolution;
+  if (observation.kind === "unobserved") {
+    return {
+      ...resolution,
+      state: "UNOBSERVED",
+      detail: `No usable response arrived, so whether ${resolution.engine_flag ?? "the configured directive"} is honoured could not be observed.`,
+    };
+  }
+  if (observation.kind === "separated") return resolution;
+  return {
+    ...resolution,
+    state: "IGNORED_BY_ENGINE",
+    detail: `Reasoning arrived inline instead of in its own field, so ${resolution.engine_flag ?? "the configured directive"} had no effect on this model or template.`,
+  };
+};

@@ -14,6 +14,7 @@
     "release:stage-desktop": "node scripts/project.mjs stage-release",
     "setup:git-hooks": "node scripts/project.mjs setup-hooks",
     "dev:controller": "bun --cwd controller run dev",
+    "probe:runtime": "bun --cwd controller run probe",
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "start:controller": "bun --cwd controller run start",

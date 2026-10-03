@@ -1,5 +1,5 @@
 export default {
-  entry: ["src/main.ts"],
+  entry: ["src/main.ts", "src/modules/diagnostics/index.ts"],
   project: ["src/**/*.ts"],
   ignore: [
     "bun.lockb",
