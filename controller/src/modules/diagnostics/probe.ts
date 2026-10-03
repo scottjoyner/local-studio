@@ -36,13 +36,16 @@ export interface QualificationProbeInput {
 
 const CATALOG_TIMEOUT_MS = 5_000;
 
+const MIN_RATE_WINDOW_MS = 10;
+
 const tokensPerSecond = (
   completionTokens: number | null,
   ttftMs: number | null,
   totalMs: number,
 ): number | null => {
   if (completionTokens === null || completionTokens <= 0) return null;
-  const generationMs = Math.max(1, totalMs - (ttftMs ?? 0));
+  const generationMs = totalMs - (ttftMs ?? 0);
+  if (generationMs < MIN_RATE_WINDOW_MS) return null;
   return Math.round((completionTokens / (generationMs / 1_000)) * 10) / 10;
 };
 

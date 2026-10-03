@@ -39,6 +39,19 @@ const openStream = (chunks: readonly Uint8Array[]): Response =>
     { headers: { "content-type": "text/event-stream" } },
   );
 
+const pacedStream = (head: readonly Uint8Array[], tail: readonly Uint8Array[]): Response =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller: ReadableStreamDefaultController<Uint8Array>) {
+        for (const chunk of head) controller.enqueue(chunk);
+        await Bun.sleep(120);
+        for (const chunk of tail) controller.enqueue(chunk);
+        controller.close();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+
 const stallStream = (prefix: readonly Uint8Array[]): Response =>
   new Response(
     new ReadableStream<Uint8Array>({
@@ -106,7 +119,23 @@ test("a runtime that answers with a real final message is OUTPUT_OK", async () =
   expect(report.model.matched).toBe(true);
   expect(report.model.max_model_len).toBe(32_768);
   expect(report.timing.ttft_ms).not.toBeNull();
-  expect(report.timing.tokens_per_second).not.toBeNull();
+  expect(report.timing.timed_tokens).toBe(2);
+  expect(report.timing.tokens_per_second).toBeNull();
+});
+
+test("a generation long enough to measure reports a token rate", async () => {
+  const report = await probe(
+    withModelCatalog(() =>
+      pacedStream(
+        [deltaFrame("O")],
+        [deltaFrame("K"), finishFrame("stop"), usageFrame(64, null)],
+      ),
+    ),
+    fastProfile(),
+  );
+  expect(report.result.classification).toBe("OUTPUT_OK");
+  expect(report.timing.generation_ms).toBeGreaterThanOrEqual(10);
+  expect(report.timing.tokens_per_second).toBeGreaterThan(0);
 });
 
 test("a runtime that accepts the connection and never emits a token is FIRST_TOKEN_TIMEOUT", async () => {
