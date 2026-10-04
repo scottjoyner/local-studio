@@ -499,6 +499,43 @@ That is twice now that the command preview and the real launch disagreed, in
 opposite directions. The preview renders intent, not behaviour, so treat any edit
 there as suspect until checked against the launch path.
 
+### The preview duplicates engine knowledge, which is why it keeps drifting
+
+Diffing the previewed command against real launch argv, per engine, after the two
+fixes above:
+
+| engine | launch-only flags | preview-only |
+| --- | --- | --- |
+| `vllm` | `--port` | none |
+| `sglang` | `--port` | none |
+| `llamacpp` | `--port --parallel --metrics --reasoning-format` | none |
+| `mlx` | `--port --max-tokens --trust-remote-code` | none |
+
+Three disagreements, in two directions, and the causes are different.
+
+**Two were dangerous — an extra or wrong flag.** `--host` previewed a value the
+launcher ignores, which for a docker recipe produces a container bound to
+`127.0.0.1` and therefore unreachable. And `--enable-auto-tool-choice` was
+previewed whenever a tool parser was set, which #32 deliberately stopped the
+launcher from doing. The second one was introduced *by* #32: the launch was
+corrected and the preview was left promising the old behaviour, so the fix for one
+preview/launch disagreement created another. Anyone acting on #32's migration note
+would have been told the preview already showed the flag — it did, and that is
+precisely what needed changing.
+
+**The rest are omissions, and they share one cause.** `--parallel`,
+`--metrics`, `--reasoning-format`, `--max-tokens`, `--trust-remote-code` and
+`--port` come from the engine's `Spelling` table and `spec.defaults`, which live
+in the controller. The frontend cannot see them; it re-declares what it knows of
+each engine in TypeScript and drifts the moment an engine changes. Fixing these
+individually treats the symptom, and the next engine addition re-opens it.
+
+The durable fix is to stop duplicating: render the preview from the controller's
+own plan rather than from a second hand-written model of each engine. That is a
+design change and is not attempted here. Until then, treat the preview as
+indicative — with the two dangerous divergences now closed, it no longer tells you
+to do something that cannot work, but it is still not the command that will run.
+
 ### ⚠ `knownKeys` is a forwarding gate, not a validation list
 
 The sharpest trap found here, and the easiest to walk into.

@@ -226,8 +226,6 @@ function appendRuntimeOptions(args: string[], backend: string, payload: RecipeCo
 function appendToolOptions(args: string[], backend: string, payload: RecipeCommandPayload) {
   if (payload.tool_call_parser) {
     args.push(`--tool-call-parser ${payload.tool_call_parser}`);
-    if (backend !== "sglang") args.push("--enable-auto-tool-choice");
-    return;
   }
   if (payload.enable_auto_tool_choice && backend !== "sglang") {
     args.push("--enable-auto-tool-choice");
