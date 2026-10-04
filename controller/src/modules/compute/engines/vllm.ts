@@ -23,7 +23,8 @@ const spelling: Spelling = {
   dtype: { flag: "--dtype" },
   quantization: { flag: "--quantization" },
   trustRemoteCode: { flag: "--trust-remote-code" },
-  toolCallParser: { flag: "--tool-call-parser", companion: "--enable-auto-tool-choice" },
+  toolCallParser: { flag: "--tool-call-parser" },
+  enableAutoToolChoice: { flag: "--enable-auto-tool-choice" },
   reasoningParser: { flag: "--reasoning-parser" },
 };
 

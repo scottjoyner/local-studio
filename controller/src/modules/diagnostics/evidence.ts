@@ -63,6 +63,46 @@ export const readRecipeFromRegistry = (
   throw new RecipeRegistryError(`recipe ${recipeId} is not in ${path}`);
 };
 
+/**
+ * Typed recipe fields whose engine flag can also be supplied through
+ * `extra_args`. Recipe overrides always win by design — without that, both
+ * spellings would reach the engine and argparse would decide — so the
+ * precedence is correct and the hazard is that the typed shape does not say so.
+ * A recipe can name a value and have it silently replaced, so this is recorded
+ * as evidence rather than changed.
+ */
+const TYPED_FLAG_FIELDS = [
+  "tensor_parallel_size",
+  "pipeline_parallel_size",
+  "max_model_len",
+  "gpu_memory_utilization",
+  "max_num_seqs",
+  "kv_cache_dtype",
+  "dtype",
+  "quantization",
+  "trust_remote_code",
+  "tool_call_parser",
+  "reasoning_parser",
+] as const;
+
+const normalizeFlagKey = (key: string): string => key.replace(/_/g, "-").toLowerCase();
+
+const shadowedTypedFields = (recipe: Recipe): readonly RecipeIncompatibility[] => {
+  const extra = Object.keys(recipe.extra_args ?? {});
+  if (extra.length === 0) return [];
+  const normalized = new Set(extra.map(normalizeFlagKey));
+  const found: RecipeIncompatibility[] = [];
+  for (const field of TYPED_FLAG_FIELDS) {
+    if (!normalized.has(normalizeFlagKey(field))) continue;
+    found.push({
+      id: `shadowed.${field}`,
+      detail: `extra_args also sets ${field}, and recipe overrides always win, so the typed value of this field never reaches the runtime. This precedence is deliberate — both spellings reaching the engine would leave the result to argparse — but nothing in the recipe shape says so.`,
+      blocks: null,
+    });
+  }
+  return found;
+};
+
 const LLAMACPP_UNSPELLED = [
   "tensor_parallel_size",
   "pipeline_parallel_size",
@@ -171,7 +211,7 @@ export const recipeEvidence = ({
     },
     bounded_output: boundedFrom(profile),
     reasoning: budget,
-    known_incompatibilities: [...engine],
+    known_incompatibilities: [...engine, ...shadowedTypedFields(recipe)],
     diagnostics: [
       {
         profile: profile.name,

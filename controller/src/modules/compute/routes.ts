@@ -63,6 +63,7 @@ const defaultOptions: ServingOptions = {
   quantization: null,
   trustRemoteCode: false,
   toolCallParser: null,
+  enableAutoToolChoice: false,
   reasoningParser: null,
 };
 

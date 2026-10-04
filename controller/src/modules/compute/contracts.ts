@@ -125,6 +125,12 @@ export interface ServingOptions {
   readonly trustRemoteCode: boolean;
   readonly toolCallParser: string | null;
   readonly reasoningParser: string | null;
+  /**
+   * Whether the engine may pick a tool call on the model's own. Distinct from
+   * `toolCallParser`, which only says how tool calls are parsed once made. vLLM
+   * needs the two together, and used to imply the second from the first.
+   */
+  readonly enableAutoToolChoice: boolean;
 }
 
 export interface LaunchRequest {

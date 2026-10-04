@@ -265,6 +265,7 @@ export const recipeToLaunchInput = (
       quantization: recipe.quantization ?? null,
       trustRemoteCode: recipe.trust_remote_code,
       toolCallParser,
+      enableAutoToolChoice: recipe.enable_auto_tool_choice,
       reasoningParser,
     },
     extraArgs: serializeRecipeExtraArguments(recipe),
