@@ -536,6 +536,24 @@ design change and is not attempted here. Until then, treat the preview as
 indicative — with the two dangerous divergences now closed, it no longer tells you
 to do something that cannot work, but it is still not the command that will run.
 
+`controller/test/compute/preview-parity.test.ts` enforces the direction that
+breaks things: **the preview may omit a flag the launcher emits, but may never
+emit a flag — or a flag with a different value — that the launcher would not.**
+Omission yields a summary; a wrong flag yields a command someone copies, runs,
+and gets something different from what Local Studio would have done. Reverting
+either fix above makes it fail, so the class is now caught rather than noticed.
+
+Two things it has to work around, both worth knowing:
+
+- The model reference is excluded. For docker the launcher rewrites the model
+  path to the container mount, so it launches `--model /models` where the preview
+  shows `--model /models/m`. That divergence is correct — a hand-run command needs
+  the host path — so excluding it is deliberate rather than convenient.
+- The preview module is imported through a computed specifier. A static import
+  makes controller's `tsc` follow it into frontend sources and fail on the `@/`
+  alias, which controller's tsconfig does not define. The runtime resolution is
+  unaffected; only the type check would be.
+
 ### ⚠ `knownKeys` is a forwarding gate, not a validation list
 
 The sharpest trap found here, and the easiest to walk into.
