@@ -73,12 +73,32 @@ export const evaluateR9700HardwareIdentity = ({
             Number(gpu.memory_total_mb) >= validMemoryFloor,
         ) ?? null;
 
-  const hardwareIdentityMethod = matchingGpuName
-    ? "controller-name+memory"
-    : matchingPciDevice && matchingMemoryGpu
+  // A supplied PCI id that resolves to nothing is a hard failure: silently
+  // falling back to name+memory would claim a device identity never verified.
+  // Reject only when PCI data is actually available and the required id is absent
+  // from it. An empty pciDevices list means lspci is unavailable on this host, and
+  // the controller-name+memory fallback is still legitimate there.
+  const pciDeviceRejected =
+    normalizedRequiredPciDeviceId !== null &&
+    matchingPciDevice === null &&
+    (pciDevices ?? []).length > 0;
+
+  const pciDataAvailable = (pciDevices ?? []).length > 0;
+  const enforcePci =
+    normalizedRequiredPciDeviceId !== null && pciDataAvailable;
+
+  const hardwareIdentityMethod = enforcePci
+    ? matchingPciDevice && matchingMemoryGpu
       ? "pci-device+memory"
-      : null;
-  const hardwareIdentityAccepted = hardwareIdentityMethod !== null;
+      : null
+    : matchingGpuName
+      ? "controller-name+memory"
+      : matchingPciDevice && matchingMemoryGpu
+        ? "pci-device+memory"
+        : null;
+  const hardwareIdentityAccepted =
+    hardwareIdentityMethod !== null && !pciDeviceRejected;
+  const pciIdentityEnforced = enforcePci;
 
   return {
     hardwareAccepted: hardwareArchitectureAccepted && hardwareIdentityAccepted,
@@ -90,5 +110,7 @@ export const evaluateR9700HardwareIdentity = ({
     matchingMemoryGpu,
     normalizedRequiredPciDeviceId,
     requiredMemoryMb: validMemoryFloor,
+    pciDeviceRejected,
+    pciIdentityEnforced,
   };
 };
