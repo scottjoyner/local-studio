@@ -466,23 +466,38 @@ The hazard is narrower than it looks: the typed recipe shape does not say that
 overrides win, so a recipe can set `max_model_len` and have it silently replaced.
 Recipe evidence now emits a `shadowed.<field>` entry naming both, so it is
 reported rather than hidden.
+### `host` was a second preview/launch disagreement — preview fixed
 
-### `host` is a second preview/launch disagreement — fix open in #35
 
-The preview emits `--host <recipe.host>` when it is set to anything but
-`0.0.0.0`; the launch path never reads it. `serveAddress` hardcodes the bind
-address per runtime: `0.0.0.0` for docker, `127.0.0.1` for a process.
 
-Here the **launch is almost certainly right and the preview is what promises
-something that cannot work** — a container bound to `127.0.0.1` is unreachable
-from the host. So unlike the case above, the fix direction is the opposite, and
-the open question is whether recipes should control bind address at all. Left
-undecided deliberately; guessing wrong breaks container reachability on live
-nodes.
+The preview emitted `--host <recipe.host>` whenever it was set to anything but
+`0.0.0.0`. The launch path never read it: `serveAddress` decides the bind address
+from the runtime, `0.0.0.0` for docker and `127.0.0.1` for a process.
 
-That is twice now that the command preview and the real launch have disagreed.
-The preview is a rendering of intent, not of behaviour, so treat any change there
-as suspect until checked against the launch path.
+Here the **launch was right and the preview was promising something that cannot
+work** — a container bound to `127.0.0.1` is unreachable from the host, so anyone
+copying the previewed command got a container they could not talk to. So the fix
+ran the opposite way from the case above: the preview now resolves the address the
+same way the launcher does, from `runtime.kind` and whether it resolves to an
+image, and always emits the flag because the launcher always does.
+
+Verified by invoking the generator rather than by reading it:
+
+| recipe runtime | previewed | launcher |
+| --- | --- | --- |
+| docker with an image | `--host 0.0.0.0` | `--host 0.0.0.0` |
+| `kind: docker` with no ref | `--host 127.0.0.1` | `--host 127.0.0.1` |
+| `kind: binary` | `--host 127.0.0.1` | `--host 127.0.0.1` |
+
+This settles an open question rather than only papering over it: **the launcher
+owns the bind address, and recipes do not control it.** If recipe-controlled bind
+address is ever wanted, that is a different change — make the launch honour the
+field — and it would have to solve container reachability first, since honouring a
+`127.0.0.1` recipe on a docker launch produces an unreachable container.
+
+That is twice now that the command preview and the real launch disagreed, in
+opposite directions. The preview renders intent, not behaviour, so treat any edit
+there as suspect until checked against the launch path.
 
 ### ⚠ `knownKeys` is a forwarding gate, not a validation list
 
