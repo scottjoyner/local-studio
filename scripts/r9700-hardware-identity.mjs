@@ -6,18 +6,24 @@ export const normalizePciDeviceId = (value) => {
     .toLowerCase()
     .replace(/\[|\]/g, "")
     .replace(/0x/g, "");
-  return /^[0-9a-f]{4}:[0-9a-f]{4}$/.test(cleaned) ? cleaned : null;
+  if (/^[0-9a-f]{4}:[0-9a-f]{4}$/.test(cleaned)) return cleaned;
+  // Also accept a PCI bus address, dropping the optional PCI domain so that both
+  // "0000:c7:00.0" and "c7:00.0" resolve to the same device.
+  const bus = cleaned.match(/^(?:[0-9a-f]{4}:)?([0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f])$/);
+  return bus ? bus[1] : null;
 };
 
 export const extractPciDevices = (text) => {
   const devices = [];
   for (const line of String(text ?? "").split("\n")) {
     const seen = new Set();
+    const slotMatch = line.trim().match(/^([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f])/i);
+    const slot = slotMatch ? normalizePciDeviceId(slotMatch[1]) : null;
     for (const match of line.matchAll(/\[([0-9a-f]{4}):([0-9a-f]{4})\]/gi)) {
       const id = `${match[1].toLowerCase()}:${match[2].toLowerCase()}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      devices.push({ id, line: line.trim() });
+      devices.push({ id, slot, line: line.trim() });
     }
   }
   return devices;
@@ -59,7 +65,12 @@ export const evaluateR9700HardwareIdentity = ({
     normalizedRequiredPciDeviceId === null
       ? null
       : (pciDevices ?? []).find(
-          (device) => normalizePciDeviceId(device?.id) === normalizedRequiredPciDeviceId,
+          (device) =>
+            [device?.id, device?.slot].some(
+              (key) =>
+                key &&
+                normalizePciDeviceId(key) === normalizedRequiredPciDeviceId,
+            ),
         ) ?? null;
 
   const matchingMemoryGpu =
