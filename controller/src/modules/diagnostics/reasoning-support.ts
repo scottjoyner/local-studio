@@ -96,7 +96,7 @@ const SUPPORT: Readonly<Record<Backend, EngineReasoningSupport>> = {
     ),
     ...serverFlagSeparation(
       "--reasoning-format",
-      "llama-server splits reasoning out of content when --reasoning-format names a dialect the template emits. Without it, thoughts arrive inside content.",
+      "llama-server splits reasoning out of content when --reasoning-format names a dialect the template emits. Without it, thoughts arrive inside content. Where the template supports it, reasoning preservation is on by default and reports that it may use more tokens; --no-reasoning-preserve trades that history back for a smaller prompt.",
     ),
   },
   vllm: {

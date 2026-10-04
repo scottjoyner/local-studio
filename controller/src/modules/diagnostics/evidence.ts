@@ -100,6 +100,12 @@ const ENGINE_INCOMPATIBILITIES: Readonly<Record<Backend, readonly RecipeIncompat
   ],
   llamacpp: [
     {
+      id: "reasoning.preserve_costs_output_tokens",
+      detail:
+        "When the chat template supports preserving the reasoning trace, llama-server enables it by default and warns that it may use more tokens. A bounded run can lose output budget to preserved reasoning history that --no-reasoning-preserve would not carry.",
+      blocks: "short_reasoning",
+    },
+    {
       id: "reasoning.budget_is_launch_time_only",
       detail:
         "--reasoning-budget is fixed when llama-server starts, so a running runtime cannot be re-budgeted from a request and a probe cannot verify the effective value. Older llama-server builds only accepted -1 or 0 and refused to start on a positive budget, and the budget re-arms for every thinking block and is disabled under backend sampling.",

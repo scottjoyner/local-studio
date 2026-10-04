@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { runQualificationProbe } from "../../src/modules/diagnostics/probe";
 import { diagnosticProfile } from "../../src/modules/diagnostics/diagnostic-profiles";
+import { reasoningSeparationFor } from "../../src/modules/diagnostics/reasoning-support";
 import {
   RecipeRegistryError,
   readRecipeFromRegistry,
@@ -239,4 +240,25 @@ test("a recipe that declares no budget reports null rather than borrowing the pr
   const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
   expect(evidence.reasoning.requested).toBeNull();
   expect(evidence.reasoning.state).toBe("SUPPORTED");
+});
+
+test("llama.cpp evidence records the reasoning-preservation token cost", async () => {
+  writeRegistry(registryWith(LLAMACPP_SERVE, "preserve-llamacpp"));
+  const recipe = readRecipeFromRegistry(registryDirectory, "preserve-llamacpp");
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
+  const ids = evidence.known_incompatibilities.map((entry) => entry.id);
+  expect(ids).toContain("reasoning.preserve_costs_output_tokens");
+  const entry = evidence.known_incompatibilities.find(
+    (item) => item.id === "reasoning.preserve_costs_output_tokens",
+  );
+  expect(entry?.detail).toContain("--no-reasoning-preserve");
+  expect(entry?.blocks).toBe("short_reasoning");
+});
+
+test("llama.cpp's separation detail names the reasoning-preservation lever", () => {
+  const separation = reasoningSeparationFor("llamacpp");
+  expect(separation.engine_flag).toBe("--reasoning-format");
+  expect(separation.detail).toContain("--no-reasoning-preserve");
 });
