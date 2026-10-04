@@ -174,14 +174,16 @@ test("generation past the wall budget is GENERATION_TIMEOUT", () => {
   ).toBe("GENERATION_TIMEOUT");
 });
 
-test("an unreachable runtime is MODEL_NOT_LOADED", () => {
-  expect(
-    classifyDiagnostic({
-      http: { status: null, ok: false, error: "connection refused", abort_stage: "connect" },
-      anatomy: null,
-      error_detail: null,
-    }).classification,
-  ).toBe("MODEL_NOT_LOADED");
+test("a runtime that answered nothing is RUNTIME_UNREACHABLE, not MODEL_NOT_LOADED", () => {
+  const report = classifyDiagnostic({
+    http: { status: null, ok: false, error: "connection refused", abort_stage: "connect" },
+    anatomy: null,
+    error_detail: null,
+  });
+  expect(report.classification).toBe("RUNTIME_UNREACHABLE");
+  // The two failures call for opposite remedies: start the runtime versus load a model.
+  expect(report.classification).not.toBe("MODEL_NOT_LOADED");
+  expect(report.evidence.join(" ")).toContain("No HTTP response was received");
 });
 
 test("a 404 and a 503 both mean the model is not served here", () => {

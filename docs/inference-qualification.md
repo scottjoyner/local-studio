@@ -246,13 +246,14 @@ Single-valued and ordered. The first matching rule wins.
 | --- | --- | --- |
 | 1 | `FIRST_TOKEN_TIMEOUT` | Connection and headers arrived, no token in the first-token budget |
 | 2 | `GENERATION_TIMEOUT` | Generation started and overran the total budget |
-| 3 | `MODEL_NOT_LOADED` | No HTTP response, or 404/503 |
-| 4 | `CONTEXT_REJECTED` | 400 whose body names a context/length refusal |
-| 5 | `INVALID_RESPONSE_SHAPE` | Any other non-2xx, or a 2xx carrying no chat choices |
-| 6 | `LENGTH_TRUNCATED` | `finish_reason == "length"` |
-| 7 | `REASONING_ONLY` | Content empty, reasoning present, not truncated |
-| 8 | `EMPTY_FINAL_CONTENT` | Content empty, no reasoning |
-| 9 | `OUTPUT_OK` | Content present |
+| 3 | `RUNTIME_UNREACHABLE` | No HTTP response at all: refused, DNS failure, or connect timeout |
+| 4 | `MODEL_NOT_LOADED` | 404 or 503 |
+| 5 | `CONTEXT_REJECTED` | 400 whose body names a context/length refusal |
+| 6 | `INVALID_RESPONSE_SHAPE` | Any other non-2xx, or a 2xx carrying no chat choices |
+| 7 | `LENGTH_TRUNCATED` | `finish_reason == "length"` |
+| 8 | `REASONING_ONLY` | Content empty, reasoning present, not truncated |
+| 9 | `EMPTY_FINAL_CONTENT` | Content empty, no reasoning |
+| 10 | `OUTPUT_OK` | Content present |
 
 `finish_reason == "length"` outranks `REASONING_ONLY` on purpose: it names the
 mechanism, which is the actionable part. The reasoning cost is not lost —
