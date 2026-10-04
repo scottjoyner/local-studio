@@ -430,35 +430,87 @@ the prompt, or that produces unusable output — is a **successful** Effect
 carrying a classification. Consumers should branch on
 `report.result.classification`, not on the Effect's success.
 
-## 9a. Findings from mapping authority (not fixed here)
+## 9a. Findings from mapping the recipe→launch authority
 
-Two verified defects in the recipe→launch path surfaced while mapping the
-authority surface. Both are recorded rather than fixed: each changes what
-reaches an engine at launch, which is production deployment authority and
-explicitly outside this work.
+Defects found while mapping how a recipe becomes an engine command. Each is
+recorded with its current status. Two are launch-time facts no probe can observe,
+because there is no running server to observe them on — which is why they live
+here and not in the classification set.
 
-**`enable_auto_tool_choice` never reaches the engine.** It is declared in
-`contracts/recipes.ts`, validated in `recipe-serializer.ts`, set to `true` by a
-starter preset in `studio/configs.ts`, and rendered in the recipe editor — but it
-is not a member of `ServingOptions` (`compute/contracts.ts:115-128`) and is not
-passed by `recipeToLaunchInput` (`compute/bridge.ts:257-268`). vLLM emits
-`--enable-auto-tool-choice` as an unconditional companion of
-`--tool-call-parser` (`engines/vllm.ts:26`). The consequence is that a recipe
-with `enable_auto_tool_choice: false` still gets the flag, and a recipe with
-`enable_auto_tool_choice: true` and no parser gets nothing. The frontend command
-preview implements the correct semantics, so the preview and the real launch
-disagree.
+### `enable_auto_tool_choice` never reached the engine — fixed
 
-**`extra_args` silently outranks every typed recipe field.**
-`mergeArguments` (`engines/shared.ts:108-125`) deletes a base flag and its value
-whenever `extra_args` supplies the same key, then appends. So
-`extra_args["max_model_len"] = 65536` overrides the `max_model_len` field with no
-warning. `extra_args` is a shadow authority with higher precedence than the
-typed shape, and the type does not say so.
+It was declared in `contracts/recipes.ts`, validated in `recipe-serializer.ts`,
+set to `true` by a starter preset, and rendered in the recipe editor — but it was
+not a member of `ServingOptions` and not passed by `recipeToLaunchInput`. vLLM
+emitted `--enable-auto-tool-choice` as an unconditional companion of
+`--tool-call-parser`, so the field lied in both directions: `false` with a parser
+still got the flag, and `true` without a parser got nothing.
 
-Neither is diagnosed by this probe — both are launch-time facts. A probe run
-against an already-running runtime cannot observe either, which is part of why
-they are recorded here rather than in the classification set.
+Now a first-class knob, matching what the command preview
+(`recipe-command.ts`) had always shown, so preview and launch agree. The
+`companion` mechanism existed only to carry this implication and is gone.
+
+*Migration:* a recipe with a `tool_call_parser` and `enable_auto_tool_choice` at
+its `false` default no longer receives the flag. That is the fix, and it is what
+the preview already promised. The one bundled preset that sets a parser also sets
+the field to `true`, so no shipped template changes behaviour.
+
+### `extra_args` precedence is deliberate — unchanged, now visible
+
+`mergeArguments` in `engines/shared.ts` deletes a base flag whenever `extra_args`
+supplies the same key, and its comment says why: *"Without this, both spellings
+reach the engine and which one applies is left to argparse."* That is a sound
+reason, so the precedence is **correct and was left alone**.
+
+The hazard is narrower than it looks: the typed recipe shape does not say that
+overrides win, so a recipe can set `max_model_len` and have it silently replaced.
+Recipe evidence now emits a `shadowed.<field>` entry naming both, so it is
+reported rather than hidden.
+
+### `host` is a second preview/launch disagreement — open
+
+The preview emits `--host <recipe.host>` when it is set to anything but
+`0.0.0.0`; the launch path never reads it. `serveAddress` hardcodes the bind
+address per runtime: `0.0.0.0` for docker, `127.0.0.1` for a process.
+
+Here the **launch is almost certainly right and the preview is what promises
+something that cannot work** — a container bound to `127.0.0.1` is unreachable
+from the host. So unlike the case above, the fix direction is the opposite, and
+the open question is whether recipes should control bind address at all. Left
+undecided deliberately; guessing wrong breaks container reachability on live
+nodes.
+
+That is twice now that the command preview and the real launch have disagreed.
+The preview is a rendering of intent, not of behaviour, so treat any change there
+as suspect until checked against the launch path.
+
+### ⚠ `knownKeys` is a forwarding gate, not a validation list
+
+The sharpest trap found here, and the easiest to walk into.
+
+`normalizeRecipeInput` in `recipe-serializer.ts` moves **any key not listed in
+`knownKeys` into `extra_args`**, and `serializeRecipeExtraArguments` then emits
+each one as `--<key-with-dashes>`. Verified:
+
+```
+parseRecipe({... , someLegacyField: "x"})  ->  extra_args {"someLegacyField":"x"}
+parseRecipe({... , thinking_mode: "..."})   ->  extra_args {}
+```
+
+So deleting a field from the recipe schema does not discard it. It **starts
+forwarding it to the engine**, where an unknown flag is rejected at startup:
+
+> remove `thinking_mode` from `knownKeys`
+> → existing recipes begin emitting `--thinking-mode conservative`
+> → vLLM and llama-server refuse to start
+
+`thinking_mode` is inert today — zero reads in the controller, zero in the
+frontend — which makes "delete the dead field" look obviously right and
+catastrophic. Removing it safely needs the same change to also strip the key from
+`extra_args`, which is a design decision, not a cleanup.
+
+**When removing any recipe field: add it to an explicit drop list in the same
+change, and confirm no stored recipe carries it.**
 
 ## 10. First real run
 
