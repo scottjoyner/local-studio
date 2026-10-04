@@ -15,9 +15,22 @@ test("a key the schema does not recognise is folded into extra_args", () => {
 });
 
 test("a recognised key stays a typed field and never becomes an extra arg", () => {
+  const recipe = parseRecipe({ ...base, kv_cache_dtype: "fp8" });
+  expect(recipe.extra_args).toEqual({});
+  expect(recipe.kv_cache_dtype).toBe("fp8");
+});
+
+test("a retired field is dropped, not forwarded as an engine flag", () => {
   const recipe = parseRecipe({ ...base, thinking_mode: "conservative" });
   expect(recipe.extra_args).toEqual({});
-  expect(recipe.thinking_mode).toBe("conservative");
+  expect("thinking_mode" in recipe).toBe(false);
+});
+
+test("retiring a field never turns it into a flag the way an unknown key does", () => {
+  const retired = parseRecipe({ ...base, thinking_mode: "conservative" });
+  const unknown = parseRecipe({ ...base, some_unknown_key: "conservative" });
+  expect(retired.extra_args).toEqual({});
+  expect(unknown.extra_args).toEqual({ some_unknown_key: "conservative" });
 });
 
 const DISTINCTIVE_VALUES: Record<string, unknown> = {
@@ -41,7 +54,6 @@ const DISTINCTIVE_VALUES: Record<string, unknown> = {
   python_path: "/usr/bin/python",
   extra_args: { "some-extra-flag": true },
   max_thinking_tokens: 512,
-  thinking_mode: "aggressive",
 };
 
 test("every typed field with a real value stays typed and is never forwarded", () => {
@@ -52,10 +64,9 @@ test("every typed field with a real value stays typed and is never forwarded", (
   }
 });
 
-test("dropping any typed field from the recognised set forwards its value instead", () => {
-  const recipe = parseRecipe({ ...base, thinking_mode: "aggressive" });
-  expect(recipe.thinking_mode).toBe("aggressive");
-  expect(Object.keys(recipe.extra_args ?? {})).toEqual([]);
+test("an unrecognised field name is folded, so a rename is never silently dropped", () => {
+  const recipe = parseRecipe({ ...base, think_mode: "aggressive" });
+  expect(recipe.extra_args).toEqual({ think_mode: "aggressive" });
 });
 
 test("an explicit extra arg is preserved verbatim for the launcher to serialise", () => {

@@ -37,7 +37,6 @@ export interface RecipeBase {
   python_path: string | null;
   extra_args: Record<string, unknown>;
   max_thinking_tokens: number | null;
-  thinking_mode: string;
 }
 
 /**
