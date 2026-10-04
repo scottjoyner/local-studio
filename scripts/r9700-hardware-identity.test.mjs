@@ -108,3 +108,46 @@ assert.equal(wrongArchRejected.hardwareIdentityAccepted, true);
 assert.equal(wrongArchRejected.hardwareAccepted, false);
 
 process.stdout.write("R9700 hardware identity contract PASS\n");
+
+// A required PCI id that is absent from available PCI data must not silently fall
+// back to a name+memory match, which would assert an identity never verified.
+const absentPciRejected = evaluateR9700HardwareIdentity({
+  architectures: ["gfx1201"],
+  requiredArch: "gfx1201",
+  requiredGpuName: "Radeon AI PRO R9700",
+  requiredPciDeviceId: "1234:5678",
+  requiredMemoryMb: 30000,
+  controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+  pciDevices: [{ id: "1002:7551", line: "[1002:7551]" }],
+});
+assert.equal(absentPciRejected.pciDeviceRejected, true);
+assert.equal(absentPciRejected.pciIdentityEnforced, true);
+assert.equal(absentPciRejected.hardwareAccepted, false);
+
+// With PCI data present, a required id that does resolve must use the PCI method.
+const presentPciEnforced = evaluateR9700HardwareIdentity({
+  architectures: ["gfx1201"],
+  requiredArch: "gfx1201",
+  requiredGpuName: "AMD Radeon Graphics",
+  requiredPciDeviceId: "1002:7551",
+  requiredMemoryMb: 30000,
+  controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+  pciDevices: [{ id: "1002:7551", line: "[1002:7551]" }],
+});
+assert.equal(presentPciEnforced.pciIdentityEnforced, true);
+assert.equal(presentPciEnforced.pciDeviceRejected, false);
+assert.equal(presentPciEnforced.hardwareIdentityMethod, "pci-device+memory");
+assert.equal(presentPciEnforced.hardwareAccepted, true);
+
+// An unparsable id is treated as "not supplied" rather than as a mismatch.
+const unparsableIdFallsBack = evaluateR9700HardwareIdentity({
+  architectures: ["gfx1201"],
+  requiredArch: "gfx1201",
+  requiredGpuName: "AMD Radeon Graphics",
+  requiredPciDeviceId: "c7:00.0",
+  requiredMemoryMb: 30000,
+  controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+  pciDevices: [{ id: "1002:7551", line: "[1002:7551]" }],
+});
+assert.equal(unparsableIdFallsBack.pciIdentityEnforced, false);
+assert.equal(unparsableIdFallsBack.hardwareAccepted, true);

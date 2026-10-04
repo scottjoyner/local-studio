@@ -5,12 +5,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 ROOT="${LOCAL_STUDIO_BONSAI_ROOT:-$HOME/.local/share/local-studio/experimental/bonsai2-r9700}"
 CONTROLLER="${LOCAL_STUDIO_URL:-http://127.0.0.1:8080}"
+# Port 8000 is taken by an unrelated service on this host, so the acceptance
+# re-pins the recipe to a free inference port instead of colliding with it.
+INFERENCE_PORT="${LOCAL_STUDIO_INFERENCE_PORT:-8010}"
 OUTPUT="${LOCAL_STUDIO_BONSAI_EVIDENCE:-$ROOT/r9700-bonsai2-acceptance.evidence.json}"
 REGISTRY_HANDOFF="${LOCAL_STUDIO_BONSAI_REGISTRY_HANDOFF:-$ROOT/registry-handoff}"
 HERMES_SESSION_EXPORT="${HERMES_SESSION_EXPORT:-$ROOT/hermes-session.evidence.jsonl}"
 OPENCODE_SESSION_EXPORT="${OPENCODE_SESSION_EXPORT:-$ROOT/opencode-session.sanitized.json}"
 OPENCODE_SESSION_RECEIPT="${OPENCODE_SESSION_RECEIPT:-$ROOT/opencode-session.receipt.json}"
 RECIPE="$ROOT/bonsai2-r9700.recipe.json"
+# The recipe pins its own port; re-pin a copy to INFERENCE_PORT.
+LAUNCH_RECIPE="$(mktemp "${TMPDIR:-/tmp}/bonsai2-recipe.XXXXXX.json")"
+python3 scripts/repin-recipe-port.py "$RECIPE" "$LAUNCH_RECIPE" "$INFERENCE_PORT"
+trap 'rm -f "$LAUNCH_RECIPE"' EXIT
 MODEL="$ROOT/models/Ternary-Bonsai-2-27B-PQ2_0.gguf"
 PROJECTOR="$ROOT/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
 MODEL_REVISION="6ed5e12bf84b7a63069882c91dd9e9218647d17b"
@@ -33,7 +40,7 @@ fi
 
 curl -fsS "${AUTH[@]}" \
   -H "Content-Type: application/json" \
-  --data-binary "@$RECIPE" \
+  --data-binary "@$LAUNCH_RECIPE" \
   "$CONTROLLER/recipes" >/dev/null
 
 recipe_state="$(
