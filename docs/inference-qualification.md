@@ -466,23 +466,93 @@ The hazard is narrower than it looks: the typed recipe shape does not say that
 overrides win, so a recipe can set `max_model_len` and have it silently replaced.
 Recipe evidence now emits a `shadowed.<field>` entry naming both, so it is
 reported rather than hidden.
+### `host` was a second preview/launch disagreement — preview fixed
 
-### `host` is a second preview/launch disagreement — fix open in #35
 
-The preview emits `--host <recipe.host>` when it is set to anything but
-`0.0.0.0`; the launch path never reads it. `serveAddress` hardcodes the bind
-address per runtime: `0.0.0.0` for docker, `127.0.0.1` for a process.
 
-Here the **launch is almost certainly right and the preview is what promises
-something that cannot work** — a container bound to `127.0.0.1` is unreachable
-from the host. So unlike the case above, the fix direction is the opposite, and
-the open question is whether recipes should control bind address at all. Left
-undecided deliberately; guessing wrong breaks container reachability on live
-nodes.
+The preview emitted `--host <recipe.host>` whenever it was set to anything but
+`0.0.0.0`. The launch path never read it: `serveAddress` decides the bind address
+from the runtime, `0.0.0.0` for docker and `127.0.0.1` for a process.
 
-That is twice now that the command preview and the real launch have disagreed.
-The preview is a rendering of intent, not of behaviour, so treat any change there
-as suspect until checked against the launch path.
+Here the **launch was right and the preview was promising something that cannot
+work** — a container bound to `127.0.0.1` is unreachable from the host, so anyone
+copying the previewed command got a container they could not talk to. So the fix
+ran the opposite way from the case above: the preview now resolves the address the
+same way the launcher does, from `runtime.kind` and whether it resolves to an
+image, and always emits the flag because the launcher always does.
+
+Verified by invoking the generator rather than by reading it:
+
+| recipe runtime | previewed | launcher |
+| --- | --- | --- |
+| docker with an image | `--host 0.0.0.0` | `--host 0.0.0.0` |
+| `kind: docker` with no ref | `--host 127.0.0.1` | `--host 127.0.0.1` |
+| `kind: binary` | `--host 127.0.0.1` | `--host 127.0.0.1` |
+
+This settles an open question rather than only papering over it: **the launcher
+owns the bind address, and recipes do not control it.** If recipe-controlled bind
+address is ever wanted, that is a different change — make the launch honour the
+field — and it would have to solve container reachability first, since honouring a
+`127.0.0.1` recipe on a docker launch produces an unreachable container.
+
+That is twice now that the command preview and the real launch disagreed, in
+opposite directions. The preview renders intent, not behaviour, so treat any edit
+there as suspect until checked against the launch path.
+
+### The preview duplicates engine knowledge, which is why it keeps drifting
+
+Diffing the previewed command against real launch argv, per engine, after the two
+fixes above:
+
+| engine | launch-only flags | preview-only |
+| --- | --- | --- |
+| `vllm` | `--port` | none |
+| `sglang` | `--port` | none |
+| `llamacpp` | `--port --parallel --metrics --reasoning-format` | none |
+| `mlx` | `--port --max-tokens --trust-remote-code` | none |
+
+Three disagreements, in two directions, and the causes are different.
+
+**Two were dangerous — an extra or wrong flag.** `--host` previewed a value the
+launcher ignores, which for a docker recipe produces a container bound to
+`127.0.0.1` and therefore unreachable. And `--enable-auto-tool-choice` was
+previewed whenever a tool parser was set, which #32 deliberately stopped the
+launcher from doing. The second one was introduced *by* #32: the launch was
+corrected and the preview was left promising the old behaviour, so the fix for one
+preview/launch disagreement created another. Anyone acting on #32's migration note
+would have been told the preview already showed the flag — it did, and that is
+precisely what needed changing.
+
+**The rest are omissions, and they share one cause.** `--parallel`,
+`--metrics`, `--reasoning-format`, `--max-tokens`, `--trust-remote-code` and
+`--port` come from the engine's `Spelling` table and `spec.defaults`, which live
+in the controller. The frontend cannot see them; it re-declares what it knows of
+each engine in TypeScript and drifts the moment an engine changes. Fixing these
+individually treats the symptom, and the next engine addition re-opens it.
+
+The durable fix is to stop duplicating: render the preview from the controller's
+own plan rather than from a second hand-written model of each engine. That is a
+design change and is not attempted here. Until then, treat the preview as
+indicative — with the two dangerous divergences now closed, it no longer tells you
+to do something that cannot work, but it is still not the command that will run.
+
+`controller/test/compute/preview-parity.test.ts` enforces the direction that
+breaks things: **the preview may omit a flag the launcher emits, but may never
+emit a flag — or a flag with a different value — that the launcher would not.**
+Omission yields a summary; a wrong flag yields a command someone copies, runs,
+and gets something different from what Local Studio would have done. Reverting
+either fix above makes it fail, so the class is now caught rather than noticed.
+
+Two things it has to work around, both worth knowing:
+
+- The model reference is excluded. For docker the launcher rewrites the model
+  path to the container mount, so it launches `--model /models` where the preview
+  shows `--model /models/m`. That divergence is correct — a hand-run command needs
+  the host path — so excluding it is deliberate rather than convenient.
+- The preview module is imported through a computed specifier. A static import
+  makes controller's `tsc` follow it into frontend sources and fail on the `@/`
+  alias, which controller's tsconfig does not define. The runtime resolution is
+  unaffected; only the type check would be.
 
 ### ⚠ `knownKeys` is a forwarding gate, not a validation list
 

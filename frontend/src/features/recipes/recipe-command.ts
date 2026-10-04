@@ -1,7 +1,4 @@
-import {
-  isInternalRecipeKey,
-  isJsonStringArgumentKey,
-} from "@local-studio/contracts/engine-args";
+import { isInternalRecipeKey, isJsonStringArgumentKey } from "@local-studio/contracts/engine-args";
 import type { RecipeEditor } from "./recipe-editor";
 import { normalizeExtraArgKey } from "./extra-args";
 import { prepareRecipeForSave } from "./prepare-recipe";
@@ -141,8 +138,14 @@ function appendModelArgument(args: string[], backend: string, modelPath?: string
   else args.push(modelPath);
 }
 
+function resolveServeAddress(payload: RecipeCommandPayload): "0.0.0.0" | "127.0.0.1" {
+  const runtime = payload.runtime;
+  const docker = runtime?.kind === "docker" && Boolean(runtime.ref);
+  return docker ? "0.0.0.0" : "127.0.0.1";
+}
+
 function appendNetworkArguments(args: string[], backend: string, payload: RecipeCommandPayload) {
-  if (payload.host && payload.host !== "0.0.0.0") args.push(`--host ${payload.host}`);
+  args.push(`--host ${resolveServeAddress(payload)}`);
   if (payload.port && payload.port !== 8000) args.push(`--port ${payload.port}`);
   if (payload.served_model_name && backend !== "mlx") {
     args.push(
@@ -223,8 +226,6 @@ function appendRuntimeOptions(args: string[], backend: string, payload: RecipeCo
 function appendToolOptions(args: string[], backend: string, payload: RecipeCommandPayload) {
   if (payload.tool_call_parser) {
     args.push(`--tool-call-parser ${payload.tool_call_parser}`);
-    if (backend !== "sglang") args.push("--enable-auto-tool-choice");
-    return;
   }
   if (payload.enable_auto_tool_choice && backend !== "sglang") {
     args.push("--enable-auto-tool-choice");
