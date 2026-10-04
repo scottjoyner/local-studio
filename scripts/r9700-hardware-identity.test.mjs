@@ -139,8 +139,10 @@ assert.equal(presentPciEnforced.pciDeviceRejected, false);
 assert.equal(presentPciEnforced.hardwareIdentityMethod, "pci-device+memory");
 assert.equal(presentPciEnforced.hardwareAccepted, true);
 
-// An unparsable id is treated as "not supplied" rather than as a mismatch.
-const unparsableIdFallsBack = evaluateR9700HardwareIdentity({
+// A bus address is a real, parseable contract. When PCI data is available but
+// carries no matching slot, it must be rejected rather than treated as "not
+// supplied" and downgraded to a name+memory match.
+const slotAbsentFromPciData = evaluateR9700HardwareIdentity({
   architectures: ["gfx1201"],
   requiredArch: "gfx1201",
   requiredGpuName: "AMD Radeon Graphics",
@@ -149,5 +151,49 @@ const unparsableIdFallsBack = evaluateR9700HardwareIdentity({
   controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
   pciDevices: [{ id: "1002:7551", line: "[1002:7551]" }],
 });
-assert.equal(unparsableIdFallsBack.pciIdentityEnforced, false);
-assert.equal(unparsableIdFallsBack.hardwareAccepted, true);
+assert.equal(slotAbsentFromPciData.pciIdentityEnforced, true);
+assert.equal(slotAbsentFromPciData.pciDeviceRejected, true);
+assert.equal(slotAbsentFromPciData.hardwareAccepted, false);
+
+// PCI bus addresses are a documented contract, so they must resolve just like a
+// vendor:device pair, with and without the PCI domain.
+assert.equal(normalizePciDeviceId("0000:c7:00.0"), "c7:00.0");
+assert.equal(normalizePciDeviceId("c7:00.0"), "c7:00.0");
+assert.equal(normalizePciDeviceId("C7:00.0"), "c7:00.0");
+assert.equal(normalizePciDeviceId("zz:00.0"), null);
+
+const slotDevices = extractPciDevices(
+  "0000:c7:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Device [1002:7551]",
+);
+assert.equal(slotDevices[0].id, "1002:7551");
+assert.equal(slotDevices[0].slot, "c7:00.0");
+
+for (const requiredPciDeviceId of ["0000:c7:00.0", "c7:00.0", "1002:7551"]) {
+  const bySlot = evaluateR9700HardwareIdentity({
+    architectures: ["gfx1201"],
+    requiredArch: "gfx1201",
+    requiredGpuName: "AMD Radeon Graphics",
+    requiredPciDeviceId,
+    requiredMemoryMb: 30000,
+    controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+    pciDevices: slotDevices,
+  });
+  assert.equal(bySlot.pciIdentityEnforced, true);
+  assert.equal(bySlot.pciDeviceRejected, false);
+  assert.equal(bySlot.hardwareIdentityMethod, "pci-device+memory");
+  assert.equal(bySlot.hardwareAccepted, true);
+}
+
+// A bus address that is absent from available PCI data must be rejected, not
+// quietly downgraded to a name+memory match.
+const absentSlotRejected = evaluateR9700HardwareIdentity({
+  architectures: ["gfx1201"],
+  requiredArch: "gfx1201",
+  requiredGpuName: "AMD Radeon Graphics",
+  requiredPciDeviceId: "ff:00.0",
+  requiredMemoryMb: 30000,
+  controllerGpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+  pciDevices: slotDevices,
+});
+assert.equal(absentSlotRejected.pciDeviceRejected, true);
+assert.equal(absentSlotRejected.hardwareAccepted, false);
