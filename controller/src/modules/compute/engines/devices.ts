@@ -18,21 +18,21 @@ export interface DeviceRuntimeFlags {
 
 const joined = (devices: readonly DeviceId[]): string => devices.join(",");
 
+const VENDOR_NAMESPACE = /^(?:nvidia|amd|apple|intel|unknown):/;
+
 /**
- * Indices for accelerators whose tooling selects by ordinal rather than UUID.
+ * Selectors as the runtime tooling wants them, without the controller's namespace.
  *
- * Only a trailing `:<digits>` is an index. A PCI bus id (`c7:00.0`) also contains a colon,
- * and a UUID may end in one, so slicing at the last colon turns those into `00.0` or a hex
- * fragment — an ordinal that selects the wrong card or none at all. Anything that is not
- * already an index is passed through untouched so the vendor tooling can resolve it.
+ * Two separate mistakes meet in this one function, and each was made on its own elsewhere:
+ * slicing at the *last* colon turns a PCI bus id (`c7:00.0`) into `00.0` and truncates a
+ * UUID to a hex fragment, while never stripping the `cuda:`/`amd:` prefix at all leaves the
+ * runtime holding a namespaced token it cannot resolve.
+ *
+ * So strip a leading vendor namespace only, and leave everything after it alone. An id with
+ * no namespace is already a bare PCI id or UUID and passes through untouched.
  */
-const ordinals = (devices: readonly DeviceId[]): string =>
-  devices
-    .map((device) => {
-      const suffix = device.slice(device.lastIndexOf(":") + 1);
-      return /^\d+$/.test(suffix) ? suffix : device;
-    })
-    .join(",");
+const runtimeSelectors = (devices: readonly DeviceId[]): string =>
+  devices.map((device) => device.replace(VENDOR_NAMESPACE, "")).join(",");
 
 export const deviceEnvironment = (
   accelerator: Accelerator,
@@ -41,13 +41,17 @@ export const deviceEnvironment = (
   if (devices.length === 0) return {};
   switch (accelerator) {
     case "cuda":
-      return { CUDA_VISIBLE_DEVICES: joined(devices) };
+      // DeviceIds are namespaced `cuda:<UUID>`; CUDA accepts the UUID, not the prefix.
+      return { CUDA_VISIBLE_DEVICES: runtimeSelectors(devices) };
     case "rocm":
       // ROCR_ gates the runtime, HIP_ gates the HIP API; setting only one leaves the
       // other seeing every card on the box.
-      return { HIP_VISIBLE_DEVICES: ordinals(devices), ROCR_VISIBLE_DEVICES: ordinals(devices) };
+      return {
+        HIP_VISIBLE_DEVICES: runtimeSelectors(devices),
+        ROCR_VISIBLE_DEVICES: runtimeSelectors(devices),
+      };
     case "xpu":
-      return { ONEAPI_DEVICE_SELECTOR: `level_zero:${ordinals(devices)}` };
+      return { ONEAPI_DEVICE_SELECTOR: `level_zero:${runtimeSelectors(devices)}` };
     case "metal":
     case "cpu":
       // Metal exposes no device selection, and CPU has nothing to select.
