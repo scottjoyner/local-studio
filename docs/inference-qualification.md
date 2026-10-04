@@ -512,6 +512,20 @@ catastrophic. Removing it safely needs the same change to also strip the key fro
 **When removing any recipe field: add it to an explicit drop list in the same
 change, and confirm no stored recipe carries it.**
 
+`controller/test/compute/recipe-serialization.test.ts` now enforces this. It
+supplies a distinctive value for every typed field and asserts none of them land
+in `extra_args`, so deleting any field from the recognised set fails CI instead of
+silently starting to forward it. Verified by removing fields one at a time:
+`host`, `dtype`, `thinking_mode` and `max_model_len` each produce failures.
+
+One limitation worth knowing: `compute/bridge.ts` cannot be imported in
+isolation. `engine-spec.ts` and the per-engine spec modules form an import cycle,
+so touching `bridge.ts` from a fresh module context throws
+`ReferenceError: Cannot access 'llamacppSpec' before initialization`. That is
+pre-existing and unrelated to this work, but it is why the test asserts at the
+serializer boundary rather than on the final argv — and it is a real constraint on
+testing anything that reaches the launcher.
+
 ## 10. First real run
 
 Eight defects were found while building this, every one of them at the seam
