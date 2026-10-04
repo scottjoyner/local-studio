@@ -55,7 +55,11 @@ export const classifyDiagnostic = ({
   }
   if (!http.ok && http.status === null) {
     push(evidence, `No HTTP response was received: ${http.error ?? "transport failure"}.`);
-    return { classification: "MODEL_NOT_LOADED", evidence };
+    // Nothing was answered, so nothing can be said about which model is loaded. This was
+    // reported as MODEL_NOT_LOADED, which points the operator at the wrong remedy: the
+    // remedy for a model that is not loaded is to load it, and the remedy for a runtime
+    // that is not there is to start it.
+    return { classification: "RUNTIME_UNREACHABLE", evidence };
   }
   if (http.status === 404 || http.status === 503) {
     push(evidence, `Runtime answered ${http.status}; the requested model is not served here.`);
