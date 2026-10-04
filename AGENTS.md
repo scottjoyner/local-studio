@@ -4,7 +4,7 @@ Local Studio is a local-first workstation whose Bun/Hono controller and Next.js/
 Work decisively without asking questions during execution, preserve user changes, never expose credentials, never use `disable cuda graphs`, `enforce eager`, or `max_tokens` with vLLM or SGLang, and leave no code comments in touched code.
 Keep code composable and typed, use Effect for async and streaming, use the shared UI kit and design tokens, validate boundary data with Effect Schema, and keep contracts defined once in `controller/contracts/` or `shared/agent/` as appropriate.
 
-NEVER WRITE TESTS. Do not add or restore unit, integration, end-to-end, snapshot, browser, smoke, or any other automated test code.
+Do not add tests as routine coverage. Unit, integration, end-to-end, snapshot, browser and smoke tests are not written for their own sake. The exception is a contract that would otherwise be silently unverifiable against a real dependency — engine wire formats, response-anatomy extraction, and diagnostic classifications. Those live in `controller/test/diagnostics/`, are fixture-driven, reach only loopback, and run inside `controller`'s `check` via `bun --cwd controller run test`. Keep them honest: a fixture that cannot fail is worse than no fixture, so assert the negative case too.
 
 Branch from `dev`, one branch per agent so two of you never share one, open a PR into `dev`, and never push directly to `dev` or `main`. `npm run check` is the local gate; CI additionally runs secret scanning, CodeQL, dependency review, and the desktop package job.
 
