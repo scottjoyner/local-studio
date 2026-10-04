@@ -467,7 +467,7 @@ overrides win, so a recipe can set `max_model_len` and have it silently replaced
 Recipe evidence now emits a `shadowed.<field>` entry naming both, so it is
 reported rather than hidden.
 
-### `host` is a second preview/launch disagreement — open
+### `host` is a second preview/launch disagreement — fix open in #35
 
 The preview emits `--host <recipe.host>` when it is set to anything but
 `0.0.0.0`; the launch path never reads it. `serveAddress` hardcodes the bind
@@ -649,15 +649,7 @@ assembly, and it did not at first: the SSE accumulator folded every reasoning
 field into `reasoning_content`, erasing the one piece of evidence that
 distinguishes the dialects. It now preserves the original key end to end.
 
-## 11. Authority boundaries preserved
-
-Unchanged, and deliberately unreachable from this code: provider routing,
-production admission, model automatic start/stop policy, deployment authority,
-request-authority security, and agent dispatch. No controller route was added,
-so no new public surface was created on the production controller. The probe
-reads two HTTP endpoints and writes nothing.
-
-## 11a. Runtime-launch facts found by running real engines
+## 11. Runtime-launch facts found by running real engines
 
 These came from actually starting engines, not from reading source. All are
 portable properties of a model or a runtime build, not of any machine.
@@ -724,7 +716,15 @@ harness, not the model — which is the precise confusion this tool exists to
 eliminate. The honest output is no number. Measure Ornith on a node with the
 memory its runtime needs.
 
-## 12. Tests
+## 12. Authority boundaries preserved
+
+Unchanged, and deliberately unreachable from this code: provider routing,
+production admission, model automatic start/stop policy, deployment authority,
+request-authority security, and agent dispatch. No controller route was added,
+so no new public surface was created on the production controller. The probe
+reads two HTTP endpoints and writes nothing.
+
+## 13. Tests
 
 `controller/test/diagnostics/` runs under `bun test`, wired into
 `controller`'s `check`.
@@ -749,4 +749,5 @@ memory its runtime needs.
   evidence shape carries no hardware placement; and pins that a recipe budget is
   judged against the recipe, not against the probe profile.
 
-Run with `bun --cwd controller run test`.
+Run with `bun --cwd controller run test`, or `bun --cwd controller check` for
+the full gate.
