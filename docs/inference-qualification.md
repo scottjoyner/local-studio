@@ -604,6 +604,73 @@ request-authority security, and agent dispatch. No controller route was added,
 so no new public surface was created on the production controller. The probe
 reads two HTTP endpoints and writes nothing.
 
+## 11a. Runtime-launch facts found by running real engines
+
+These came from actually starting engines, not from reading source. All are
+portable properties of a model or a runtime build, not of any machine.
+
+**Architecture support is build-specific, and getting it wrong fails at load, not
+at request.** Mainline `llama-server` (`925e117`) refuses `k2-horizon` GGUFs
+outright:
+
+```
+error loading model: unknown model architecture: 'k2-horizon'
+```
+
+The same GGUFs load on a build cut for them (`llama.cpp-k2horizon`, commit
+`42adf01`). No probe can detect this, because the server never starts — it is a
+launch-time fact, and it is the kind of detail that makes a node look "broken"
+rather than "wrongly built". Record the runtime reference in recipe evidence so
+the pairing is visible.
+
+**Some GGUFs are not standalone-servable.** `MiniCPM5-2.6B-DSpark.gguf` is a
+`dflash` model: `failed to initialize the context: dflash requires ctx_other to be
+set`. It is a speculative-decoding partner for another model, not a server in its
+own right. If a recipe points at one, the failure looks like an OOM or a corrupt
+GGUF and is neither.
+
+**`--reasoning-preserve` is a direct lever on output budget.** Where the chat
+template supports it, `llama-server` enables it by default and warns:
+
+```
+chat template supports preserving reasoning, it is enabled by default
+(may use more tokens, disable via --no-reasoning-preserve)
+```
+
+A bounded run can lose output budget to preserved reasoning history.
+`--no-reasoning-preserve` trades that history back for a smaller prompt. This was
+in no documentation in the repository and in no support table until a real startup
+log surfaced it; it is now recorded in llama.cpp's known incompatibilities.
+
+### What one model family actually looks like
+
+K2-Horizon-4B on its dedicated build, CPU-only, all four profiles:
+
+| profile | cap | classification | content | reasoning |
+| --- | --- | --- | --- | --- |
+| `protocol_canary` | 16 | `LENGTH_TRUNCATED` | 0 | 66 |
+| `exact_grounding` | 32 | `LENGTH_TRUNCATED` | 0 | 122 |
+| `short_reasoning` | 256 | `LENGTH_TRUNCATED` | 0 | ~1.5k |
+| `bounded_code` | 256 | `OUTPUT_OK` | 56 | 423 |
+
+Every profile under 256 output tokens returned no usable content, because
+reasoning consumed the cap — the campaign's K2 symptom, reproduced and explained.
+At 256 tokens the model produced a correct `add` function and finished cleanly.
+The qualification answer is therefore specific: *viable for bounded benchmark work
+only at an output cap of 256 or above, with reasoning read from its own field.*
+The cheap canaries are the wrong instrument for this family, which is exactly the
+trap the campaign fell into.
+
+### What could not be measured, and why that matters
+
+Ornith-1.5-35B-A3B could not be qualified on this machine: `n_gpu_layers 99`
+could not be fitted on an integrated GPU (`failed to fit params to free device
+memory`), so a 22.6 GB MoE ran CPU-only, and the server did not survive the
+session. Any "Ornith timed out" figure produced that way would measure the
+harness, not the model — which is the precise confusion this tool exists to
+eliminate. The honest output is no number. Measure Ornith on a node with the
+memory its runtime needs.
+
 ## 12. Tests
 
 `controller/test/diagnostics/` runs under `bun test`, wired into
