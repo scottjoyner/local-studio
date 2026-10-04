@@ -771,6 +771,45 @@ A bounded run can lose output budget to preserved reasoning history.
 in no documentation in the repository and in no support table until a real startup
 log surfaced it; it is now recorded in llama.cpp's known incompatibilities.
 
+### Campaign answers
+
+Two of the campaign's observations were reproduced on local hardware, and both
+resolved to a recipe setting rather than a model fault.
+
+**MiniCPM5 — "reachable, real-source grounding failed".** Reproduced exactly:
+
+| profile | cap | classification | content | reasoning |
+| --- | --- | --- | --- | --- |
+| `protocol_canary` | 16 | `OUTPUT_OK` | 2 | 46 |
+| `exact_grounding` | 32 | `LENGTH_TRUNCATED` | 0 | 125 |
+| `short_reasoning` | 256 | `LENGTH_TRUNCATED` | 0 | 750 |
+| `bounded_code` | 256 | `OUTPUT_OK` | 36 | 268 |
+
+The canary passes and grounding fails, which is the reported symptom. The model is
+not the problem — on the failing request its reasoning names the expected token
+verbatim (`We need to output exactly the token "LST-QUAL-4417"…`) and simply never
+terminates inside the cap. Sweeping the output limit gives the threshold:
+
+| cap | finish_reason | content | reasoning |
+| --- | --- | --- | --- |
+| 32 | `length` | empty | 125 chars |
+| 48 | `length` | empty | 174 chars |
+| 64 | `stop` | `LST-QUAL-4417` | 193 chars |
+| 128 | `stop` | `LST-QUAL-4417` | 193 chars |
+
+**MiniCPM5-2B needs at least 64 output tokens to ground a short verbatim
+answer.** At 32 the reasoning consumes the entire budget and no content is
+emitted at all. So "real-source grounding failed" was a 32-token cap on a model
+that spends ~190 characters reasoning — a recipe setting, not a defect.
+
+That is why the profiles are a sweep rather than one setting. Any single cap
+misreports *something*: 16 passes a model that cannot ground, 32 fails one that
+can. Read across profiles — canary `OUTPUT_OK` while grounding is
+`LENGTH_TRUNCATED` means raise the cap, and the failing profile names how far.
+
+**K2-Horizon** behaved the same way, and its threshold is higher: every profile
+below 256 returned zero content, and 256 produced a correct answer.
+
 ### What one model family actually looks like
 
 K2-Horizon-4B on its dedicated build, CPU-only, all four profiles:
