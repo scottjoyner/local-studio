@@ -1,3 +1,4 @@
+import type { RecipeLaunchPreview } from "@local-studio/contracts/recipes";
 import type { Recipe, RecipeWithStatus } from "../types";
 import type { ApiCore } from "./core";
 
@@ -28,6 +29,16 @@ export function createRecipesApi(core: ApiCore) {
         timeout: 600_000,
         retries: 0,
       }),
+
+    /**
+     * Ask the controller what this draft recipe would launch as. Read-only: it renders argv
+     * from the same launch planner the runtime uses, so the editor's preview cannot drift from
+     * the real command. Accepts an unsaved draft.
+     */
+    previewRecipe: (recipe: Recipe): Promise<RecipeLaunchPreview> =>
+      core.rpcJson(
+        core.rpc.recipes.preview.$post(undefined, { init: { body: JSON.stringify(recipe) } }),
+      ),
 
     deleteRecipe: (id: string): Promise<void> =>
       core.rpcJson(core.rpc.recipes[":recipeId"].$delete({ param: { recipeId: id } })),

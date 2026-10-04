@@ -44,7 +44,7 @@ interface RpcRoute {
 }
 
 interface ControllerRpc {
-  recipes: RpcRoute & { ":recipeId": RpcRoute };
+  recipes: RpcRoute & { ":recipeId": RpcRoute } & { preview: RpcRoute };
   studio: {
     rigs: RpcRoute & {
       ":rigId": RpcRoute & {

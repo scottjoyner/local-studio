@@ -1,12 +1,20 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMountSubscription } from "@/hooks/use-mount-subscription";
 import api from "@/lib/api/client";
-import type { Backend, RecipeWithStatus } from "@/lib/types";
+import type { RecipeLaunchPreview } from "@local-studio/contracts/recipes";
+import type { Backend, Recipe, RecipeWithStatus } from "@/lib/types";
 import type { RecipeEditor } from "@/features/recipes/recipe-editor";
 import { ENGINE_LABEL, getEngineCapabilities } from "@/features/recipes/engine-capabilities";
 import { generateCommand } from "@/features/recipes/recipe-command";
+import {
+  emptyPreviewAnswer,
+  isPreviewCurrent,
+  renderPreviewCommand,
+  type LaunchPreviewAnswer,
+} from "@/features/recipes/launch-preview";
+import { prepareRecipeForSave } from "@/features/recipes/prepare-recipe";
 import {
   filterExtraArgsForEditor,
   mergeExtraArgsFromEditor,
@@ -37,6 +45,64 @@ function useRuntimeInstallation(backend: Backend) {
     }
   }, [backend]);
   return { installing, message, install };
+}
+
+/**
+ * Asks the controller to render the launch command for the current draft.
+ *
+ * The authoritative answer comes from the same `planLaunch` the runtime uses, so it cannot drift
+ * from what actually launches. Two deliberate constraints:
+ *
+ * - It never writes to the recipe. `handleCommandChange` persists `launch_command` on every
+ *   keystroke by comparing against `generatedCommand`, so an edit landing while the baseline was
+ *   stale would be recorded as an override. The caller keeps the field read-only unless
+ *   `authoritative`, which is computed by identity below rather than by a status flag.
+ * - It does not fall back silently. If the controller is unreachable the local builder's output is
+ *   shown and `status` reports it, because a preview that quietly stops matching the launcher is
+ *   the exact failure this replaced.
+ *
+ * `useMountSubscription` re-subscribes when `recipe` changes, so this refetches on edit without
+ * the effect hooks this repo bans. Each answer records which recipe object it was computed for;
+ * because a draft edit produces a new object, a stale answer can be recognised by identity and
+ * the field stays read-only until it is replaced. That also avoids setting state synchronously
+ * during subscription, which would cascade renders.
+ */
+function useLaunchPreview(recipe: RecipeEditor) {
+  const [answer, setAnswer] = useState<LaunchPreviewAnswer<RecipeEditor>>(
+    emptyPreviewAnswer<RecipeEditor>,
+  );
+  const requestId = useRef(0);
+
+  useMountSubscription(() => {
+    const id = ++requestId.current;
+    const timer = setTimeout(() => {
+      api
+        .previewRecipe(prepareRecipeForSave(recipe) as Recipe)
+        .then((preview: RecipeLaunchPreview) => {
+          // A slower earlier request must never overwrite a newer answer.
+          if (id !== requestId.current) return;
+          setAnswer({
+            forRecipe: recipe,
+            command: renderPreviewCommand(preview.argv),
+            warnings: preview.warnings,
+            status: "ready",
+          });
+        })
+        .catch(() => {
+          if (id !== requestId.current) return;
+          setAnswer({ forRecipe: recipe, command: null, warnings: [], status: "unavailable" });
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [recipe]);
+
+  const authoritative = isPreviewCurrent(answer, recipe);
+  return {
+    command: authoritative ? answer.command : null,
+    warnings: authoritative ? answer.warnings : [],
+    status: answer.status,
+    authoritative,
+  };
 }
 
 export function useRecipeModalModel({
@@ -129,10 +195,16 @@ export function useRecipeModalModel({
     return lookup;
   }, [recipes]);
 
-  const generatedCommand = useMemo(
+  // The controller's answer supersedes the local builder once it lands. Until then the local
+  // output is shown so the field is never blank, but it is marked non-authoritative and the
+  // caller keeps the textarea read-only, because an edit compared against a provisional baseline
+  // would be persisted as a launch_command override.
+  const localCommand = useMemo(
     () => generateCommand(recipe, { includeCommandOverride: false }),
     [recipe],
   );
+  const preview = useLaunchPreview(recipe);
+  const generatedCommand = preview.command ?? localCommand;
   const savedCommandOverride = getCommandOverride(recipe);
   const commandText = editedCommand ?? savedCommandOverride ?? generatedCommand;
   const hasCommandOverride = editedCommand !== null || savedCommandOverride !== null;
@@ -243,6 +315,9 @@ export function useRecipeModalModel({
     modelServedNames,
     generatedCommand,
     commandText,
+    previewStatus: preview.status,
+    previewAuthoritative: preview.authoritative,
+    previewWarnings: preview.warnings,
     hasCommandOverride,
     handleCommandChange,
     handleCommandReset,
