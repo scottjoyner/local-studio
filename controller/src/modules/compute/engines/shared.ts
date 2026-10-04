@@ -48,9 +48,6 @@ export const prometheusMetrics = (prefix: string, kvName: string): MetricMap => 
  */
 export interface FlagSpec {
   readonly flag: string;
-  /** Emitted alongside the flag when the knob is set — vLLM's tool parser needs
-   *  `--enable-auto-tool-choice` next to it, SGLang's does not. */
-  readonly companion?: string;
 }
 
 export type TuningKey = keyof ServingOptions;
@@ -68,6 +65,7 @@ const TUNING_ORDER: readonly TuningKey[] = [
   "quantization",
   "trustRemoteCode",
   "toolCallParser",
+  "enableAutoToolChoice",
   "reasoningParser",
 ];
 
@@ -91,7 +89,6 @@ export const tuningArguments = (options: ServingOptions, spelling: Spelling): st
     if (!spec || !shouldEmit(key, value)) continue;
     if (typeof value === "boolean") args.push(spec.flag);
     else args.push(spec.flag, String(value));
-    if (spec.companion) args.push(spec.companion);
   }
   return args;
 };

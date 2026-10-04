@@ -262,3 +262,49 @@ test("llama.cpp's separation detail names the reasoning-preservation lever", () 
   expect(separation.engine_flag).toBe("--reasoning-format");
   expect(separation.detail).toContain("--no-reasoning-preserve");
 });
+
+test("a typed field shadowed by extra_args is recorded rather than silently lost", async () => {
+  writeRegistry(
+    registryWith(
+      { ...LLAMACPP_SERVE, extra_args: { max_model_len: 65536, "custom-flag": true } },
+      "shadowed-llamacpp",
+    ),
+  );
+  const recipe = readRecipeFromRegistry(registryDirectory, "shadowed-llamacpp");
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
+
+  const shadowed = evidence.known_incompatibilities.filter((entry) =>
+    entry.id.startsWith("shadowed."),
+  );
+  expect(shadowed.map((entry) => entry.id)).toEqual(["shadowed.max_model_len"]);
+  expect(shadowed[0]?.detail).toContain("never reaches the runtime");
+  expect(shadowed[0]?.detail).toContain("deliberate");
+});
+
+test("extra_args that do not shadow a typed field record nothing", async () => {
+  writeRegistry(
+    registryWith({ ...LLAMACPP_SERVE, extra_args: { "custom-flag": true } }, "clean-llamacpp"),
+  );
+  const recipe = readRecipeFromRegistry(registryDirectory, "clean-llamacpp");
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
+  expect(
+    evidence.known_incompatibilities.some((entry) => entry.id.startsWith("shadowed.")),
+  ).toBe(false);
+});
+
+test("the dashed spelling of a typed field is recognised as shadowing it", async () => {
+  writeRegistry(
+    registryWith({ ...LLAMACPP_SERVE, extra_args: { "max-model-len": 4096 } }, "dashed-llamacpp"),
+  );
+  const recipe = readRecipeFromRegistry(registryDirectory, "dashed-llamacpp");
+  const profile = diagnosticProfile("short_reasoning");
+  if (!profile) throw new Error("short_reasoning profile is missing");
+  const evidence = recipeEvidence({ recipe, profile, report: await probeOnce() });
+  expect(
+    evidence.known_incompatibilities.map((entry) => entry.id),
+  ).toContain("shadowed.max_model_len");
+});
