@@ -6,7 +6,7 @@ import { effectHandler } from "../../http/effect-handler";
 import { badRequest, serviceUnavailable } from "../../core/errors";
 import type { AppContext } from "../../app-context";
 import { getGpuInfo } from "./platform/gpu";
-import { fetchInference } from "../../http/local-fetch";
+import { fetchLocal, resolveInferenceTargetPort } from "../../http/local-fetch";
 import type { UsageAggregate } from "../../stores/inference-request-store";
 import {
   LLAMACPP_METRIC_NAMES,
@@ -243,7 +243,18 @@ export const registerMonitoringRoutes = defineRoutes((app, context) => {
             .join(" ")}`;
 
           const start = performance.now();
-          const response = yield* fetchInference(context, "/v1/chat/completions", {
+          // Send this to the port the observed process is actually listening on.
+          // fetchInference targets config.inference_port, which is only correct when
+          // the active runtime happens to sit on the configured default. A recipe
+          // may pin any port -- the R9700/Bonsai recipe pins 8010 -- and the request
+          // then landed on whatever else owns the configured port, which answered 404
+          // and surfaced as `benchmarkEvidenceAccepted: false` on the promotion lane.
+          const targetPort = resolveInferenceTargetPort(
+            current.port,
+            context.config.inference_port,
+          );
+          const response = yield* fetchLocal(targetPort, "/v1/chat/completions", {
+            host: context.config.inference_host,
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

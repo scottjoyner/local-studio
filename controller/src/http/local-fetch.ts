@@ -59,6 +59,20 @@ export const fetchLocal = (
 export const buildInferenceUrl = (context: AppContext, path: string, port?: number): string =>
   buildLocalUrl(port ?? context.config.inference_port, path, context.config.inference_host);
 
+/**
+ * Pick the port a request to the inference runtime should use.
+ *
+ * `config.inference_port` is only correct when the active runtime happens to sit on
+ * the configured default. A recipe may pin any port -- the R9700/Bonsai recipe pins
+ * 8010 -- so a handler that resolves the model from the observed process but sends
+ * the request to the configured port will talk to the wrong server. That produced
+ * `benchmarkEvidenceAccepted: false` with a 404 on the R9700 promotion lane.
+ */
+export const resolveInferenceTargetPort = (
+  observedPort: number,
+  configuredPort: number,
+): number => (observedPort > 0 ? observedPort : configuredPort);
+
 export const fetchInference = (
   context: AppContext,
   path: string,
