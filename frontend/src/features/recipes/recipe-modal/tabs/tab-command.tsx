@@ -11,6 +11,8 @@ export function RecipeModalTabCommand({
   commandText,
   generatedCommand,
   hasCommandOverride,
+  previewAuthoritative,
+  previewWarnings,
   onCommandChange,
   onResetCommand,
 }: {
@@ -19,6 +21,8 @@ export function RecipeModalTabCommand({
   onRecipeSourceChange: (value: string) => void;
   onFormatRecipeSource: () => void;
   commandText: string;
+  previewAuthoritative: boolean;
+  previewWarnings: string[];
   generatedCommand: string;
   hasCommandOverride: boolean;
   onCommandChange: (value: string) => void;
@@ -82,9 +86,28 @@ export function RecipeModalTabCommand({
           </div>
         </div>
 
+        {previewWarnings.length > 0 ? (
+          <ul className="flex flex-col gap-1">
+            {previewWarnings.map((warning) => (
+              <li
+                key={warning}
+                className="text-xs text-(--ui-warning)"
+                data-testid="launch-preview-warning"
+              >
+                {warning}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         <textarea
           value={commandText}
           onChange={(e) => onCommandChange(e.target.value)}
+          // Read-only until the controller's answer lands. handleCommandChange persists
+          // launch_command on every keystroke by comparing against generatedCommand, so editing
+          // against a provisional baseline would silently record an override.
+          readOnly={!previewAuthoritative}
+          aria-busy={!previewAuthoritative}
           spellCheck={false}
           className="min-h-[220px] flex-1 resize-none rounded-[10px] border border-(--ui-border) bg-(--color-surface) px-4 py-3 font-mono text-[length:var(--fs-md)] leading-6 text-(--ui-fg) outline-none selection:bg-(--ui-info)/25 placeholder:text-(--ui-muted)/50 focus:border-(--ui-border) focus:ring-1 focus:ring-(--link)/45"
           placeholder={generatedCommand || "Command will appear here..."}

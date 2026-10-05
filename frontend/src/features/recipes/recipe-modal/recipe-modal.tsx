@@ -104,6 +104,8 @@ export function RecipeModal({
               onRecipeSourceChange: model.handleRecipeSourceChange,
               onFormatRecipeSource: model.handleRecipeSourceFormat,
               commandText: model.commandText,
+              previewAuthoritative: model.previewAuthoritative,
+              previewWarnings: model.previewWarnings,
               generatedCommand: model.generatedCommand,
               hasCommandOverride: model.hasCommandOverride,
               onCommandChange: model.handleCommandChange,

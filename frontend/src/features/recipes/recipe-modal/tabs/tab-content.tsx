@@ -33,6 +33,8 @@ export type RecipeModalEnvironmentProps = {
 };
 
 export type RecipeModalCommandProps = {
+  previewAuthoritative: boolean;
+  previewWarnings: string[];
   recipeSourceText: string;
   recipeSourceError: string | null;
   onRecipeSourceChange: (value: string) => void;
