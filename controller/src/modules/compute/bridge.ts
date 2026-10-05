@@ -8,7 +8,7 @@ import {
   isJsonStringArgumentKey,
 } from "@local-studio/contracts/engine-args";
 import { getExtraArgument } from "../engines/argument-utilities";
-import { resolveLlamaBinary } from "../engines/specs/llamacpp-spec";
+import { resolveLlamaBinary } from "./llamacpp-binary";
 import type { GpuInfo, ProcessInfo, Recipe } from "../models/types";
 import { resolveRecipeGpuUuids } from "../system/gpu-visibility";
 import { getGpuInfo } from "../system/platform/gpu";
