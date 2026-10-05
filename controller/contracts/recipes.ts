@@ -112,3 +112,28 @@ export interface ModelInfo {
   hidden_size?: number | null;
   head_dim?: number | null;
 }
+
+/**
+ * A read-only prediction of what a recipe would launch as, rendered from the same launch
+ * planner the runtime uses.
+ *
+ * The recipe editor previously rendered its command preview from a second, hand-written model
+ * of every engine's flags. That model omitted `--reasoning-format` and `--metrics` for
+ * llama.cpp and `--max-tokens`/`--trust-remote-code` for mlx, so a user configuring a reasoning
+ * model saw no reasoning configuration at all while launch applied `--reasoning-format deepseek`.
+ * Rendering from the planner makes that drift impossible rather than merely detectable.
+ *
+ * Two fields are predictions rather than certainties, and both are surfaced in `warnings`:
+ * the port (allocated at launch, absent an explicit recipe port) and container model paths
+ * (resolved at mount time).
+ */
+export interface RecipeLaunchPreview {
+  engine: Backend;
+  kind: "process" | "docker";
+  argv: string[];
+  binary: string | null;
+  port: number;
+  devices: string[];
+  docker_image: string | null;
+  warnings: string[];
+}

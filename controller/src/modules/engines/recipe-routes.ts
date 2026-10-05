@@ -6,6 +6,8 @@ import { effectHandler } from "../../http/effect-handler";
 import { documentRoute, defineRoutes, mergeRoutes } from "../../http/route-registrar";
 import { isRecipeRunning } from "../models/recipes/recipe-matching";
 import { parseRecipe } from "../models/recipes/recipe-serializer";
+import { previewRecipeLaunch } from "../compute/recipe-preview";
+import { getGpuInfo } from "../system/platform/gpu";
 import { Event } from "../system/event-manager";
 
 const RecipePayloadSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -47,6 +49,28 @@ export const registerRecipeRoutes = defineRoutes((app, context) => {
               recipe ? Effect.succeed(ctx.json(recipe)) : Effect.fail(notFound("Recipe not found")),
             ),
           ),
+      ),
+    ),
+
+    /**
+     * Read-only. Renders the argv a recipe *would* launch as, using the same planner the
+     * launcher uses, so the editor's command preview cannot drift from reality. Accepts an
+     * unsaved draft: nothing is persisted and nothing is launched.
+     */
+    app.post(
+      "/recipes/preview",
+      documentRoute,
+      effectHandler((ctx) =>
+        Effect.gen(function* () {
+          const body = yield* decodeJsonBody(ctx, RecipePayloadSchema);
+          const recipe = yield* Effect.try({
+            try: () => parseRecipe(body),
+            catch: (error) => badRequest(String(error)),
+          });
+          const host = yield* context.compute.host();
+          const gpus = yield* getGpuInfo().pipe(Effect.catch(() => Effect.succeed([])));
+          return ctx.json(previewRecipeLaunch(recipe, context.config, host, gpus));
+        }),
       ),
     ),
 
