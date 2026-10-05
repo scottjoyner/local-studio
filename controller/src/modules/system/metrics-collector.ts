@@ -1,7 +1,7 @@
 import type { AppContext } from "../../app-context";
 import { Effect, Schedule } from "effect";
 import { getGpuInfo } from "./platform/gpu";
-import { getSystemRuntimeInfo } from "../engines/runtimes/runtime-info";
+import { getSystemRuntimeInfo } from "../engines/runtimes/system-runtime-info";
 import type { UsageAggregate } from "../../stores/inference-request-store";
 import {
   SGLANG_METRIC_NAMES,

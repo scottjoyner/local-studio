@@ -11,7 +11,7 @@ import { effectHandler } from "../../http/effect-handler";
 import { findObservedInferenceProcess } from "../../core/function-observability";
 import { estimateWeightsSizeBytes } from "../models/model-browser";
 import { getGpuInfo } from "./platform/gpu";
-import { getSystemRuntimeInfo } from "../engines/runtimes/runtime-info";
+import { getSystemRuntimeInfo } from "../engines/runtimes/system-runtime-info";
 import { buildCompatibilityReport } from "./platform/compatibility-report";
 import { registerMonitoringRoutes } from "./metrics-routes";
 import { registerLogsRoutes } from "./logs-routes";
