@@ -109,18 +109,30 @@ export const buildCompatibilityReport = (args: {
     });
   }
 
+  // Only a torch-dependent backend can actually be broken by missing HIP. vLLM and
+  // SGLang both require PyTorch; llama.cpp and MLX do not, and neither does the
+  // pinned managed-binary process runtime. Raising this as an error on every ROCm
+  // host made /compat unsatisfiable for that lane -- the R9700/Bonsai promotion
+  // gate could never pass on a host that correctly has no torch at all.
+  const torchDependentBackendInstalled =
+    runtime.backends.vllm.installed || runtime.backends.sglang.installed;
+
   if (runtime.platform.kind === "rocm" && !runtime.platform.torch.torch_hip) {
     addCheck(checks, {
       id: "torch.rocm-missing-hip",
-      severity: "error",
-      message:
-        "ROCm platform detected, but PyTorch does not report HIP support (torch.version.hip is null).",
+      severity: torchDependentBackendInstalled ? "error" : "info",
+      message: torchDependentBackendInstalled
+        ? "ROCm platform detected, but PyTorch does not report HIP support (torch.version.hip is null)."
+        : "ROCm platform detected without a HIP-enabled PyTorch build. No torch-based backend is installed, so nothing in use depends on it.",
       evidence: toEvidence([
         `torch_version=${runtime.platform.torch.torch_version ?? "null"}`,
         `torch_hip=${runtime.platform.torch.torch_hip ?? "null"}`,
+        `vllm_installed=${runtime.backends.vllm.installed}`,
+        `sglang_installed=${runtime.backends.sglang.installed}`,
       ]),
-      suggested_fix:
-        "Install a ROCm-enabled PyTorch build that matches your ROCm version, and ensure the controller is using that Python environment.",
+      suggested_fix: torchDependentBackendInstalled
+        ? "Install a ROCm-enabled PyTorch build that matches your ROCm version, and ensure the controller is using that Python environment."
+        : "No action needed unless you intend to run vLLM or SGLang, which both require PyTorch.",
     });
   }
 
