@@ -127,6 +127,9 @@ export const registerSystemRoutes = defineRoutes((app, context) => {
               inference_port: context.config.inference_port,
               inference_port_open: portOpen,
               inference_process_known: Boolean(known),
+              // Omitted rather than passed as undefined: this repo sets
+              // exactOptionalPropertyTypes, which rejects an explicit undefined.
+              ...(known ? { inference_process_port: known.port } : {}),
               gpu_monitoring: runtime.gpu_monitoring,
             }),
           );

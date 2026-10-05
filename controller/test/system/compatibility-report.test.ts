@@ -46,6 +46,31 @@ const reportWith = (
     gpu_monitoring: { available: true, tool: "amd-smi" },
   });
 
+/** Minimal ROCm host: no GPUs enumerated, no torch, no backends installed. */
+type RocmeOnlyRuntime = {
+  platform: { kind: "rocm"; torch: { torch_version: null; torch_cuda: null; torch_hip: null } };
+  gpu_monitoring: { available: boolean; tool: string };
+  cuda: Record<string, never>;
+  gpus: { count: number };
+  backends: Record<string, RuntimeBackendInfo>;
+};
+
+const rocmeOnlyRuntime = (): RocmeOnlyRuntime => ({
+  platform: {
+    kind: "rocm" as const,
+    torch: { torch_version: null, torch_cuda: null, torch_hip: null },
+  },
+  gpu_monitoring: { available: true, tool: "amd-smi" as const },
+  cuda: {},
+  gpus: { count: 1 },
+  backends: {
+    vllm: backend(false),
+    sglang: backend(false),
+    llamacpp: backend(false),
+    mlx: backend(false),
+  },
+});
+
 const severityOf = (
   report: CompatibilityReport,
   id: string,
@@ -80,6 +105,37 @@ describe("buildCompatibilityReport torch scoping", () => {
     const report = reportWith([], "6.3.0");
 
     expect(severityOf(report, "torch.rocm-missing-hip")).toBeUndefined();
+  });
+
+  it("does not treat a squatted configured port as an error", () => {
+    // Regression: a permanently occupied LOCAL_STUDIO_INFERENCE_PORT (assistx owns
+    // 8000 on the R9700 host) made /compat permanently unsatisfiable, and the
+    // promotion gate treats any error-severity check as disqualifying.
+    const squatted = buildCompatibilityReport({
+      runtime: rocmeOnlyRuntime() as never,
+      inference_port: 8000,
+      inference_port_open: true,
+      inference_process_known: false,
+      gpu_monitoring: { available: true, tool: "amd-smi" },
+    });
+
+    expect(severityOf(squatted, "inference.port-in-use")).toBe("warn");
+    expect(hasError(squatted)).toBe(false);
+  });
+
+  it("still reports the squatted port when a process is known", () => {
+    const known = buildCompatibilityReport({
+      runtime: rocmeOnlyRuntime() as never,
+      inference_port: 8000,
+      inference_port_open: true,
+      inference_process_known: true,
+      inference_process_port: 8010,
+      gpu_monitoring: { available: true, tool: "amd-smi" },
+    });
+
+    // A known process means this check must stay silent, and the observed port is
+    // recorded so the mismatch with the configured port is visible.
+    expect(severityOf(known, "inference.port-in-use")).toBeUndefined();
   });
 
   it("leaves non-torch backends out of the condition", () => {

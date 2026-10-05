@@ -85,6 +85,7 @@ export const buildCompatibilityReport = (args: {
   inference_port: number;
   inference_port_open: boolean;
   inference_process_known: boolean;
+  inference_process_port?: number;
   gpu_monitoring: { available: boolean; tool: RuntimeGpuMonitoringTool | null };
 }): CompatibilityReport => {
   const { runtime } = args;
@@ -160,13 +161,26 @@ export const buildCompatibilityReport = (args: {
   }
 
   if (args.inference_port_open && !args.inference_process_known) {
+    // This is a configuration observation, not proof the controller is broken. The
+    // configured inference port being occupied only matters when something actually
+    // needs to reach the runtime there -- and a recipe may pin a different port
+    // entirely, which is the R9700/Bonsai case. Reporting it at severity "error"
+    // made /compat permanently unsatisfiable on any host where an unrelated service
+    // owns the configured default, and the promotion gate treats any error as
+    // disqualifying.
     addCheck(checks, {
       id: "inference.port-in-use",
-      severity: "error",
-      message: "Inference port is in use by an unknown process.",
-      evidence: toEvidence([`inference_port=${args.inference_port}`]),
+      severity: "warn",
+      message:
+        "The configured inference port is in use by a process this controller does not recognise.",
+      evidence: toEvidence([
+        `inference_port=${args.inference_port}`,
+        `inference_port_open=${args.inference_port_open}`,
+        `inference_process_known=${args.inference_process_known}`,
+        `inference_process_port=${args.inference_process_port ?? "none"}`,
+      ]),
       suggested_fix:
-        "Stop the process using the inference port, or change LOCAL_STUDIO_INFERENCE_PORT to a free port.",
+        "Only relevant if the runtime is expected on the configured port. A recipe may pin its own port; check the served process port. Otherwise free the port or set LOCAL_STUDIO_INFERENCE_PORT.",
     });
   }
 
