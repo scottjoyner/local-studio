@@ -20,7 +20,11 @@ try {
     },
     hardware: {
       requiredArch: "gfx1201",
-      requiredGpuName: "Radeon AI PRO R9700",
+      // Observed on the physical R9700 host. The controller reports "AMD Radeon
+      // Graphics"; no telemetry source emits the marketing name, which is why this
+      // fixture previously encoded a fiction that let the renderer bug pass tests.
+      requiredGpuName: "AMD Radeon Graphics",
+      requiredPciDeviceId: "1002:7551",
       architectures: ["gfx1201"],
     },
     controller: {
@@ -29,7 +33,9 @@ try {
       gpus: {
         ok: true,
         status: 200,
-        body: { gpus: [{ name: "AMD Radeon AI PRO R9700", memory_total_mb: 32768 }] },
+        body: {
+          gpus: [{ index: 0, name: "AMD Radeon Graphics", memory_total_mb: 32624 }],
+        },
       },
     },
     target: {
@@ -118,7 +124,13 @@ try {
       benchmarkEvidenceAccepted: true,
       candidatePromotable: true,
       localStudioRevision: "70b786743ceb4bce1d15b528b06b736f50ad0554",
-      matchingGpu: { name: "AMD Radeon AI PRO R9700" },
+      matchingMemoryGpu: {
+        index: 0,
+        name: "AMD Radeon Graphics",
+        memory_total_mb: 32624,
+      },
+      matchingPciDevice: { id: "1002:7551", slot: "c7:00.0" },
+      hardwareIdentityMethod: "pci-device+memory",
     },
   };
   writeFileSync(evidencePath, JSON.stringify(accepted));
@@ -361,6 +373,61 @@ try {
     { encoding: "utf8" },
   );
   assert(override.status !== 0, "renderer silently accepted a registry identity override");
+
+  // The renderer must identify the card by PCI identity, not by a marketing name
+  // no telemetry source emits. This is the case that failed on the physical host,
+  // where the controller reports "AMD Radeon Graphics".
+  writeFileSync(
+    evidencePath,
+    JSON.stringify({
+      ...accepted,
+      hardware: { ...accepted.hardware, requiredGpuName: "Some Card Nobody Emits" },
+      summary: { ...accepted.summary, matchingGpu: undefined },
+    }),
+  );
+  const nameAgnostic = spawnSync(
+    process.execPath,
+    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "name-agnostic")],
+    { encoding: "utf8" },
+  );
+  assert(
+    nameAgnostic.status === 0,
+    "renderer required a GPU marketing name instead of PCI identity: " +
+      (nameAgnostic.stderr || ""),
+  );
+
+  // A wrong PCI device id must still be rejected -- the identity check is real.
+  writeFileSync(
+    evidencePath,
+    JSON.stringify({
+      ...accepted,
+      hardware: { ...accepted.hardware, requiredPciDeviceId: "dead:beef" },
+    }),
+  );
+  const wrongPci = spawnSync(
+    process.execPath,
+    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "wrong-pci")],
+    { encoding: "utf8" },
+  );
+  assert(wrongPci.status !== 0, "renderer accepted a wrong PCI device id");
+
+  // So must an undersized card.
+  writeFileSync(
+    evidencePath,
+    JSON.stringify({
+      ...accepted,
+      summary: {
+        ...accepted.summary,
+        matchingMemoryGpu: { index: 0, name: "AMD Radeon Graphics", memory_total_mb: 4096 },
+      },
+    }),
+  );
+  const smallGpu = spawnSync(
+    process.execPath,
+    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "small-gpu")],
+    { encoding: "utf8" },
+  );
+  assert(smallGpu.status !== 0, "renderer accepted an undersized GPU");
 
   process.stdout.write("registry handoff contract PASS\n");
 } finally {

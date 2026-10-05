@@ -60,7 +60,13 @@ if (evidence?.summary?.candidatePromotable !== true) {
 
 const expected = {
   hardwareArch: "gfx1201",
-  gpuName: "Radeon AI PRO R9700",
+  // Identity is pinned by PCI device id, not by a marketing name. The controller
+  // reports this GPU as "AMD Radeon Graphics" and no telemetry source emits
+  // "Radeon AI PRO R9700", so asserting on a name string made this renderer
+  // unsatisfiable on the physical host.
+  pciDeviceId: "1002:7551",
+  pciDeviceSlot: "c7:00.0",
+  minMemoryMb: 30000,
   modelRevision: "6ed5e12bf84b7a63069882c91dd9e9218647d17b",
   model: "Ternary-Bonsai-2-27B-PQ2_0",
   recipe: "bonsai2-r9700-prism-rocm",
@@ -76,7 +82,32 @@ const assertEqual = (actual, wanted, label) => {
 };
 
 assertEqual(evidence?.hardware?.requiredArch, expected.hardwareArch, "hardware arch");
-assertEqual(evidence?.hardware?.requiredGpuName, expected.gpuName, "GPU identity");
+assertEqual(evidence?.hardware?.requiredPciDeviceId, expected.pciDeviceId, "PCI device id");
+assertEqual(
+  evidence?.summary?.matchingPciDevice?.id,
+  expected.pciDeviceId,
+  "matched PCI device id",
+);
+assertEqual(
+  evidence?.summary?.matchingPciDevice?.slot,
+  expected.pciDeviceSlot,
+  "matched PCI slot",
+);
+assertEqual(
+  evidence?.summary?.hardwareIdentityMethod,
+  "pci-device+memory",
+  "hardware identity method",
+);
+{
+  const totalMemoryMb = Number(evidence?.summary?.matchingMemoryGpu?.memory_total_mb);
+  if (!Number.isInteger(totalMemoryMb) || totalMemoryMb < expected.minMemoryMb) {
+    throw new Error(
+      `matching GPU memory too small: expected >= ${expected.minMemoryMb}, got ${String(
+        evidence?.summary?.matchingMemoryGpu?.memory_total_mb,
+      )}`,
+    );
+  }
+}
 assertEqual(evidence?.target?.modelRevision, expected.modelRevision, "model revision");
 assertEqual(evidence?.target?.model, expected.model, "served model");
 assertEqual(evidence?.target?.recipeId, expected.recipe, "recipe id");
@@ -118,15 +149,22 @@ const controllerGpus =
   Array.isArray(evidence.controller.gpus.body.gpus)
     ? evidence.controller.gpus.body.gpus
     : [];
+// Identify the GPU by the VRAM floor the evidence already matched, not by a name
+// string. The summary carries matchingMemoryGpu, which is what identity was
+// actually proven against.
 const rawMatchingGpu = controllerGpus.find(
   (gpu) =>
     gpu &&
     typeof gpu === "object" &&
-    typeof gpu.name === "string" &&
-    gpu.name.toLowerCase().includes(expected.gpuName.toLowerCase()),
+    Number(gpu.memory_total_mb) >= expected.minMemoryMb &&
+    gpu.index === evidence?.summary?.matchingMemoryGpu?.index,
 );
 if (!rawMatchingGpu) {
-  throw new Error("controller GPU evidence does not contain Radeon AI PRO R9700");
+  throw new Error(
+    `controller GPU evidence does not contain the matched device at index ${String(
+      evidence?.summary?.matchingMemoryGpu?.index,
+    )} with >= ${expected.minMemoryMb} MB`,
+  );
 }
 if (evidence?.controller?.status?.ok !== true) {
   throw new Error("controller status evidence is not accepted");
@@ -368,7 +406,9 @@ const recipe = {
       max_concurrency: 1,
       hardware: {
         architecture: expected.hardwareArch,
-        controller_name: evidence?.summary?.matchingGpu?.name ?? expected.gpuName,
+        controller_name: evidence?.summary?.matchingMemoryGpu?.name ?? rawMatchingGpu.name,
+        pci_device_id: expected.pciDeviceId,
+        pci_device_slot: expected.pciDeviceSlot,
       },
       runtime: {
         ref: evidence.target.engineRef,
