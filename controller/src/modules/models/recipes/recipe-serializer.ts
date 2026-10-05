@@ -73,7 +73,16 @@ const coerceBoolean = (value: unknown, fallback: boolean): boolean =>
  * @param raw - Unknown recipe payload.
  * @returns Normalized record.
  */
-export const normalizeRecipeInput = (raw: unknown): Record<string, unknown> => {
+export /**
+ * Fields that were once part of the recipe shape and now mean nothing. They are
+ * dropped on read rather than treated as unknown, because the unknown-key path
+ * folds them into `extra_args` and every entry there is emitted as an engine flag
+ * — so simply deleting one of these from the schema would make stored recipes
+ * start passing it to the engine and fail to launch.
+ */
+const RETIRED_RECIPE_KEYS: ReadonlySet<string> = new Set(["thinking_mode"]);
+
+const normalizeRecipeInput = (raw: unknown): Record<string, unknown> => {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid recipe payload");
   }
@@ -157,12 +166,15 @@ export const normalizeRecipeInput = (raw: unknown): Record<string, unknown> => {
     "python_path",
     "extra_args",
     "max_thinking_tokens",
-    "thinking_mode",
     "tp",
     "pp",
   ]);
 
   for (const key of Object.keys(data)) {
+    if (RETIRED_RECIPE_KEYS.has(key)) {
+      delete data[key];
+      continue;
+    }
     if (!knownKeys.has(key)) {
       extraArguments[key] = data[key];
       delete data[key];
@@ -208,7 +220,6 @@ export const recipeSchema = Schema.Struct({
   python_path: nullableStringSchema,
   extra_args: Schema.Record(Schema.String, Schema.Unknown),
   max_thinking_tokens: Schema.Union([Schema.Null, integerSchema]),
-  thinking_mode: Schema.String,
 });
 
 /**
@@ -246,8 +257,7 @@ export const parseRecipe = (raw: unknown): Recipe => {
     python_path: normalized["python_path"] ?? null,
     extra_args: normalized["extra_args"] ?? {},
     max_thinking_tokens: coerceNullableNumber(normalized["max_thinking_tokens"]),
-    thinking_mode: normalized["thinking_mode"] ?? "conservative",
-  });
+    });
   const environmentVariables = parsed.env_vars
     ? Object.fromEntries(
         Object.entries(parsed.env_vars).map(([key, value]) => [key, String(value)]),
