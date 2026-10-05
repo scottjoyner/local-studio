@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
+const RENDERER_REVISION = "8dea941f5a5aaef0ed0edcc24374cc4363b31f1d";
+
 const repoRoot = resolve(import.meta.dirname, "..");
 const renderer = join(repoRoot, "scripts", "render-r9700-bonsai-registry-candidate.mjs");
 const temp = mkdtempSync(join(tmpdir(), "local-studio-registry-handoff-"));
@@ -137,7 +139,7 @@ try {
 
   const ok = spawnSync(
     process.execPath,
-    [renderer, "--evidence", evidencePath, "--output-dir", outputDir],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", evidencePath, "--output-dir", outputDir],
     { encoding: "utf8" },
   );
   if (ok.status !== 0) {
@@ -152,6 +154,45 @@ try {
   const assert = (condition, message) => {
     if (!condition) throw new Error(message);
   };
+
+  // The two revisions record different things and must not be conflated: the
+  // evidence revision is where the run happened, the renderer revision is which
+  // code produced this artifact. They legitimately differ.
+  assert(
+    manifest.source_local_studio_revision === accepted.summary.localStudioRevision,
+    "manifest did not record the evidence revision",
+  );
+  assert(
+    manifest.renderer_local_studio_revision === RENDERER_REVISION,
+    "manifest did not record the renderer revision",
+  );
+
+  // Omitting the renderer revision must fail rather than silently produce an
+  // artifact with no producing-code provenance.
+  const missingRevision = spawnSync(
+    process.execPath,
+    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "no-rev")],
+    { encoding: "utf8" },
+  );
+  assert(
+    missingRevision.status !== 0,
+    "renderer accepted an invocation with no --renderer-revision",
+  );
+
+  const badRevision = spawnSync(
+    process.execPath,
+    [
+      renderer,
+      "--renderer-revision",
+      "not-a-sha",
+      "--evidence",
+      evidencePath,
+      "--output-dir",
+      join(temp, "bad-rev"),
+    ],
+    { encoding: "utf8" },
+  );
+  assert(badRevision.status !== 0, "renderer accepted a malformed --renderer-revision");
 
   const modelKeys = new Set([
     "schema_version",
@@ -309,7 +350,7 @@ try {
   );
   const rejected = spawnSync(
     process.execPath,
-    [renderer, "--evidence", rejectedPath, "--output-dir", join(temp, "reject-out")],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", rejectedPath, "--output-dir", join(temp, "reject-out")],
     { encoding: "utf8" },
   );
   assert(rejected.status !== 0, "renderer accepted non-promotable evidence");
@@ -327,7 +368,7 @@ try {
   );
   const tampered = spawnSync(
     process.execPath,
-    [renderer, "--evidence", tamperedPath, "--output-dir", join(temp, "tampered-out")],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", tamperedPath, "--output-dir", join(temp, "tampered-out")],
     { encoding: "utf8" },
   );
   assert(tampered.status !== 0, "renderer accepted a forged artifact receipt");
@@ -387,7 +428,7 @@ try {
   );
   const nameAgnostic = spawnSync(
     process.execPath,
-    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "name-agnostic")],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", evidencePath, "--output-dir", join(temp, "name-agnostic")],
     { encoding: "utf8" },
   );
   assert(
@@ -406,7 +447,7 @@ try {
   );
   const wrongPci = spawnSync(
     process.execPath,
-    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "wrong-pci")],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", evidencePath, "--output-dir", join(temp, "wrong-pci")],
     { encoding: "utf8" },
   );
   assert(wrongPci.status !== 0, "renderer accepted a wrong PCI device id");
@@ -424,7 +465,7 @@ try {
   );
   const smallGpu = spawnSync(
     process.execPath,
-    [renderer, "--evidence", evidencePath, "--output-dir", join(temp, "small-gpu")],
+    [renderer, "--renderer-revision", RENDERER_REVISION, "--evidence", evidencePath, "--output-dir", join(temp, "small-gpu")],
     { encoding: "utf8" },
   );
   assert(smallGpu.status !== 0, "renderer accepted an undersized GPU");

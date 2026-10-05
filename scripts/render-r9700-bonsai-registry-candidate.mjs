@@ -4,7 +4,13 @@ import { basename, resolve } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
-const allowedOptions = new Set(["--help", "--evidence", "--output-dir", "--source-url"]);
+const allowedOptions = new Set([
+  "--help",
+  "--evidence",
+  "--output-dir",
+  "--source-url",
+  "--renderer-revision",
+]);
 for (let index = 0; index < argv.length; index += 1) {
   const argument = argv[index];
   if (!argument.startsWith("--")) continue;
@@ -25,8 +31,13 @@ if (argv.includes("--help")) {
       "Usage: node scripts/render-r9700-bonsai-registry-candidate.mjs --evidence <path> [options]",
       "  --output-dir <directory>",
       "  --source-url <url>",
+      "  --renderer-revision <sha>   exact 40-char SHA of the code producing this artifact",
       "",
       "The renderer refuses evidence unless summary.candidatePromotable is true.",
+      "",
+      "source_local_studio_revision is taken from the evidence and records where the",
+      "run happened. renderer_local_studio_revision records which renderer produced",
+      "this artifact. They can differ; both are recorded so each is reproducible.",
       "",
     ].join("\n"),
   );
@@ -40,6 +51,19 @@ const sourceUrl = value(
   "--source-url",
   "https://github.com/scottjoyner/local-studio/pull/1",
 );
+// The revision of the code that produced THIS artifact. Distinct from
+// source_local_studio_revision, which is the revision the evidence was captured on.
+// They legitimately differ -- a renderer fix can land after a run -- and conflating
+// them makes a handoff impossible to reproduce, because the evidence revision's own
+// renderer may refuse to run. Both are recorded so each can be checked out.
+const rendererRevision = value("--renderer-revision");
+if (!rendererRevision || !/^[0-9a-f]{40}$/i.test(rendererRevision)) {
+  throw new Error(
+    "--renderer-revision is required and must be an exact 40-character Git SHA",
+  );
+}
+const normalizedRendererRevision = rendererRevision.toLowerCase();
+
 const hardwareId = "radeon-ai-pro-r9700-32gb";
 const modelInstanceId = "prism-ml-ternary-bonsai-2-27b-gguf--pq2-0";
 const recipeId = "llamacpp-bonsai2-pq2-radeon-ai-pro-r9700-32gb-tp1";
@@ -459,6 +483,7 @@ writeFileSync(
       generated_at: new Date().toISOString(),
       source_evidence_sha256: evidenceSha256,
       source_local_studio_revision: normalizedSourceRevision,
+      renderer_local_studio_revision: normalizedRendererRevision,
       hardware_id: hardwareId,
       model_instance_id: modelInstanceId,
       recipe_id: recipeId,
